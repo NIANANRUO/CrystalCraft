@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.test-build/
+.test-ui/
+test-results/
+playwright-report/
+*.log
+.env
+.env.*
+!.env.example
+# Local historical previews and scripts (kept locally; not required to build).
+/*preview*.png
+/style_*.png
+/*_view.png
+/three_features.png
+/updated_bonds_closeup.png
+/scratch_*.mjs
+# Local validation outputs derived from the owner's research files.
+/docs/qa/real-volume/
+/docs/qa/

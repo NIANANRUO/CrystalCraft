@@ -1,0 +1,40 @@
+{
+  "name": "crystal-craft-web",
+  "private": true,
+  "version": "0.5.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && node scripts/write-build-info.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/run-tests.mjs",
+    "test:e2e": "playwright test",
+    "check": "npm audit --audit-level=moderate && npm test && npm run build && npm run test:e2e",
+    "test:deployment": "playwright test --config=playwright.deployment.config.ts",
+    "test:performance": "node tests/performance.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^1.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": "^0.174.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@types/three": "^0.174.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "0.25.12",
+    "postcss": "^8.5.30",
+    "tailwindcss": "4.3.3",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "license": "MIT"
+}
