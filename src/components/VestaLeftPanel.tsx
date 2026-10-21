@@ -895,6 +895,7 @@ export const VestaLeftPanel: React.FC<VestaLeftPanelProps> = ({
                     <div className="pt-2 border-t border-slate-100 space-y-1">
                       <div className="flex items-center justify-between text-[10px]">
                         <span className="text-slate-600 font-medium">化学键形态 (Bond style):</span>
+                        <button onClick={() => onOpenProperties('bonds')} className="rounded px-1.5 py-1 text-blue-700 hover:bg-blue-50" title="按原子对编辑键长与边界搜索规则">Bonds 编辑…</button>
                       </div>
                       <select
                         value={visualSettings.bondStyle}

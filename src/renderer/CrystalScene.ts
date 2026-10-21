@@ -26,6 +26,7 @@ import { exportPixelBudget, planImageExport } from './exportPlan';
 import { assertAtomCount } from '../utils/validation';
 import { assertRenderBudget, MAX_DISPLAYED_ATOMS, MAX_BOND_SEGMENTS, MAX_WEAK_INTERACTIONS, MAX_POLYHEDRON_LIGANDS, MAX_POLYHEDRA_POINTS } from './limits';
 import { dist } from '../utils/math';
+import { atomSiteLabel, bondSearchRadius, createBondMatcher, expandBondRuleAtoms, ruleMatchesDirection, matchesBondRule } from '../utils/bonding';
 import { VolumeLayer, VolumeStatus } from '../volume/VolumeLayer';
 
 export class CrystalScene {
@@ -670,9 +671,10 @@ export class CrystalScene {
       this.displayedAtomsCache = this.computeDisplayedAtoms();
       if (this.visualSettings.hideNonbonding) {
         const atoms = this.displayedAtomsCache;
-        const radius = Math.max(0.1, ...atoms.map(a => getElement(a.element).radius * 2 * this.visualSettings.bondTolerance));
+        const radius = bondSearchRadius(atoms, this.visualSettings);
         const index = new SpatialIndex(atoms, radius);
-        this.displayedAtomsCache = atoms.filter(a => index.query(a.cartesian, radius).some(b => a.id !== b.id && dist(a.cartesian, b.cartesian) > 0.4 && dist(a.cartesian, b.cartesian) <= (getElement(a.element).radius + getElement(b.element).radius) * this.visualSettings.bondTolerance));
+        const matches = createBondMatcher(this.visualSettings);
+        this.displayedAtomsCache = atoms.filter(a => index.query(a.cartesian, radius).some(b => a.id !== b.id && matches(a, b)));
       }
       const large = (this.currentStructure?.atoms.length ?? 0) >= 500;
       const slices = this.visualSettings.atomSlices ?? (large ? 16 : 32), stacks = this.visualSettings.atomStacks ?? (large ? 12 : 24);
@@ -736,6 +738,7 @@ export class CrystalScene {
 
   private computeDisplayedAtoms(): Atom[] {
     if (!this.currentStructure) return [];
+    if (this.visualSettings.bondSettings?.enabled) return expandBondRuleAtoms(this.currentStructure, this.visualSettings);
     const baseAtoms = this.currentStructure.atoms;
     if (!this.visualSettings.showBoundaryAtoms || !this.currentStructure.lattice || !this.currentStructure.isPeriodic) {
       return baseAtoms;
@@ -993,8 +996,8 @@ export class CrystalScene {
     const baseBondRadius = this.renderMode === 'stick' 
       ? Math.max(0.12, this.visualSettings.bondRadius * 1.8) 
       : this.visualSettings.bondRadius;
-    const tolerance = this.visualSettings.bondTolerance;
     const bondStyle = this.visualSettings.bondStyle;
+    const matches = createBondMatcher(this.visualSettings);
 
     const isDarkBond = this.visualSettings.bondColorMode === 'dark';
     const isSplit = this.visualSettings.bondColorMode === 'split';
@@ -1003,8 +1006,7 @@ export class CrystalScene {
       ? '#1c1917'
       : (this.visualSettings.customBondColor || '#8fa4ba');
     const uniformBondColor = isDarkBond ? '#18181b' : defaultBondColor;
-    const maxRadius = Math.max(...atoms.map(atom => getElement(atom.element).radius), 0.1);
-    const searchRadius = Math.max(0.1, 2 * maxRadius * tolerance);
+    const searchRadius = bondSearchRadius(atoms, this.visualSettings);
     const spatialIndex = new SpatialIndex(atoms, searchRadius);
     const atomIndices = new Map(atoms.map((atom, i) => [atom, i]));
     const customNeighbors = new Map<number, Set<number>>();
@@ -1019,7 +1021,6 @@ export class CrystalScene {
       const a1 = atoms[i];
       const effId1 = a1.originalId ?? a1.id;
       if (this.hiddenAtomIds.has(effId1)) continue;
-      const r1 = getElement(a1.element).radius;
       const col1 = this.getEffectiveAtomColor(a1);
 
       const candidates = new Set(spatialIndex.query(a1.cartesian, searchRadius).map(atom => atomIndices.get(atom)!));
@@ -1030,16 +1031,13 @@ export class CrystalScene {
         const a2 = atoms[j];
         const effId2 = a2.originalId ?? a2.id;
         if (this.hiddenAtomIds.has(effId2)) continue;
-        if (a1.isBoundary && a2.isBoundary) continue; // Skip ghost-to-ghost bond outside cell
+        if (!this.visualSettings.bondSettings?.enabled && a1.isBoundary && a2.isBoundary) continue;
 
-        const r2 = getElement(a2.element).radius;
         const col2 = this.getEffectiveAtomColor(a2);
 
         const d = dist(a1.cartesian, a2.cartesian);
         const isCustom = manualIds?.has(effId2) ?? false;
-        const maxBondDist = (r1 + r2) * tolerance;
-
-        if ((d > 0.4 && d <= maxBondDist) || isCustom) {
+        if (matches(a1, a2, d) || isCustom) {
           // VESTA Polyhedral Style filtering:
           if (this.visualSettings.showPolyhedra) {
             const polyStyle = this.visualSettings.polyhedraSettings?.style ?? 2;
@@ -1214,9 +1212,12 @@ export class CrystalScene {
 
     const centerMode = settings.centerMode || 'all';
     const customAtomIds = settings.customAtomIds || [];
+    const bondRules = this.visualSettings.bondSettings?.enabled ? this.visualSettings.bondSettings.rules : null;
     const maxLigandRadius = Math.max(...displayedAtoms.map(atom => getElement(atom.element).radius), 0.1);
-    const ligandIndex = new SpatialIndex(displayedAtoms, Math.max(2.85, 2 * maxLigandRadius * tolerance * 1.12));
+    const ligandRadius = bondRules ? bondSearchRadius(displayedAtoms, this.visualSettings) : Math.max(2.85, 2 * maxLigandRadius * tolerance * 1.12);
+    const ligandIndex = new SpatialIndex(displayedAtoms, ligandRadius);
     let totalLigandPoints = 0;
+    let coordinationChecks = 0;
 
     baseAtoms.forEach(centerAtom => {
       const effCenterId = centerAtom.originalId ?? centerAtom.id;
@@ -1227,8 +1228,10 @@ export class CrystalScene {
         if (!customAtomIds.includes(effCenterId)) return;
       } else {
         // All mode: all atoms matching centralElements are polyhedra centers
-        if (!centralElements.includes(centerAtom.element)) return;
+        if (!bondRules && !centralElements.includes(centerAtom.element)) return;
       }
+      if (bondRules && !bondRules.some(r => r.showPolyhedra && r.searchMode !== 'molecule' &&
+        (r.searchByLabel ? atomSiteLabel(centerAtom) : centerAtom.element) === r.atom1)) return;
 
       const pCenter = new THREE.Vector3(centerAtom.cartesian.x, centerAtom.cartesian.y, centerAtom.cartesian.z);
       const rCenter = getElement(centerAtom.element).radius;
@@ -1236,7 +1239,7 @@ export class CrystalScene {
       // Find coordinating ligand atoms among displayedAtoms
       const ligands: { atom: Atom; pos: THREE.Vector3; dist: number }[] = [];
 
-      const candidates = new Set(ligandIndex.query(centerAtom.cartesian, Math.max((rCenter + maxLigandRadius) * tolerance * 1.12, 2.85)));
+      const candidates = new Set(ligandIndex.query(centerAtom.cartesian, ligandRadius));
       const manualLigandIds = new Set<number>();
       this.customBonds.forEach(({ id1, id2 }) => {
         if (id1 === effCenterId) manualLigandIds.add(id2);
@@ -1245,18 +1248,22 @@ export class CrystalScene {
       if (manualLigandIds.size) displayedAtoms.forEach(atom => { if (manualLigandIds.has(atom.originalId ?? atom.id)) candidates.add(atom); });
       candidates.forEach(ligand => {
         const effLigandId = ligand.originalId ?? ligand.id;
-        if (effLigandId === effCenterId || this.hiddenAtomIds.has(effLigandId)) return;
+        if (ligand.id === centerAtom.id || (!bondRules && effLigandId === effCenterId) || this.hiddenAtomIds.has(effLigandId)) return;
 
         const pLig = new THREE.Vector3(ligand.cartesian.x, ligand.cartesian.y, ligand.cartesian.z);
         const d = pCenter.distanceTo(pLig);
-        if (d < 0.4) return; // same site
+        if (d < (bondRules ? 1e-8 : 0.4)) return;
 
         const rLig = getElement(ligand.element).radius;
         // In VESTA, coordination is based on bonding connectivity or distance cutoff
         const maxCoordDist = Math.max((rCenter + rLig) * (tolerance * 1.12), 2.85);
         const isCustomBond = manualLigandIds.has(effLigandId);
 
-        if (d <= maxCoordDist || isCustomBond) {
+        const ruleCoordination = bondRules?.some(r => {
+          assertRenderBudget(++coordinationChecks, 4_000_000, '多面体规则搜索过于复杂，请减少规则或缩小键长范围后重试。');
+          return r.showPolyhedra && r.searchMode !== 'molecule' && ruleMatchesDirection(r, centerAtom, ligand) && matchesBondRule(r, centerAtom, ligand, d);
+        });
+        if ((bondRules ? ruleCoordination : d <= maxCoordDist) || isCustomBond) {
           assertRenderBudget(ligands.length + 1, MAX_POLYHEDRON_LIGANDS, '单个配位中心的邻接原子过多。请降低成键容差或指定较少的多面体中心后重试。');
           ligands.push({ atom: ligand, pos: pLig, dist: d });
         }

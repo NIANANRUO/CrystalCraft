@@ -7,6 +7,8 @@ import { exportPixelBudget, planImageExport } from '../src/renderer/exportPlan';
 import { CrystalScene } from '../src/renderer/CrystalScene';
 import { MAX_BOND_SEGMENTS } from '../src/renderer/limits';
 import type { Atom } from '../src/types/crystal';
+import { DEFAULT_POLYHEDRA_SETTINGS } from '../src/types/crystal';
+import { calculateLatticeFromMatrix } from '../src/utils/math';
 
 const atom = (id: number, x: number, y = 0, z = 0): Atom => ({
   id, element: 'C', cartesian: { x, y, z }, fractional: { x, y, z },
@@ -47,6 +49,47 @@ function releaseHarness(scene: any) {
   scene.unitSphereGeo.dispose();
   scene.unitCylinderGeo.dispose();
 }
+
+test('explicit bond intervals and Poly flags change actual geometry and recover after clearing rules', () => {
+  const scene = sceneHarness();
+  try {
+    const center = { ...atom(1, 0), element: 'Ti' };
+    const ligands = [atom(2, 1.4), atom(3, -1.4), atom(4, 0, 1.4), atom(5, 0, 0, 1.4)].map(a => ({ ...a, element: 'O' }));
+    scene.currentStructure = { title: 'tetrahedron', isPeriodic: false, atoms: [center, ...ligands] };
+    const rule = { id: 'Ti-O', searchMode: 'pair', boundaryMode: 1, searchByLabel: false, atom1: 'Ti', atom2: 'O', minLength: 1.3, maxLength: 1.5, showPolyhedra: true };
+    scene.visualSettings.bondSettings = { enabled: true, rules: [rule] };
+    scene.visualSettings.showPolyhedra = true;
+    scene.visualSettings.polyhedraSettings = structuredClone(DEFAULT_POLYHEDRA_SETTINGS);
+    scene.rebuildScene();
+    assert.equal(scene.getStatusMessage(), null);
+    assert.equal(scene.getDisplayedCounts().bondsCount, 4);
+    assert.equal(scene.getDisplayedCounts().polyhedraCount, 1);
+    rule.showPolyhedra = false; scene.rebuildScene();
+    assert.equal(scene.getDisplayedCounts().bondsCount, 4); assert.equal(scene.getDisplayedCounts().polyhedraCount, 0);
+    rule.minLength = 1.45; scene.rebuildScene(); assert.equal(scene.getDisplayedCounts().bondsCount, 0);
+    scene.visualSettings.bondSettings.rules = []; scene.rebuildScene(); assert.equal(scene.bondGroup.children.length, 0);
+    scene.visualSettings.hideNonbonding = true; scene.rebuildScene(); assert.equal(scene.getDisplayedCounts().atomsCount, 0);
+    scene.visualSettings.bondSettings.enabled = false; scene.rebuildScene();
+    assert.equal(scene.getStatusMessage(), null); assert.equal(scene.getDisplayedCounts().atomsCount, 5);
+  } finally { releaseHarness(scene); }
+});
+
+test('recursive bond search failure clears derived geometry, retains input and recovers with Boundary 1', () => {
+  const scene = sceneHarness();
+  try {
+    scene.currentStructure = { title: 'periodic chain', isPeriodic: true, atoms: [atom(1, 0)],
+      lattice: calculateLatticeFromMatrix([{ x: 1, y: 0, z: 0 }, { x: 0, y: 20, z: 0 }, { x: 0, y: 0, z: 20 }]) };
+    scene.visualSettings.showBoundaryAtoms = true;
+    const rule = { id: 'chain', searchMode: 'pair', boundaryMode: 3, searchByLabel: false, atom1: 'C', atom2: 'C', minLength: 0, maxLength: 1.1, showPolyhedra: false };
+    scene.visualSettings.bondSettings = { enabled: true, rules: [rule] };
+    scene.rebuildScene();
+    assert.match(scene.getStatusMessage(), /周期网络|预算/);
+    assert.equal(scene.currentStructure.atoms.length, 1);
+    for (const group of scene.structureGroup.children) assert.equal(group.children.length, 0);
+    rule.boundaryMode = 1; scene.rebuildScene();
+    assert.equal(scene.getStatusMessage(), null); assert.equal(scene.getDisplayedCounts().atomsCount, 1);
+  } finally { releaseHarness(scene); }
+});
 
 test('atom geometry, radii, thermal axes, isolation filter and outline controls affect real scene objects', () => {
   const scene = sceneHarness();

@@ -260,7 +260,7 @@ export function App() {
     parseImportedBlob(file,progress=>{if(generation===importGeneration.current)setImportProgress(Math.floor(progress.loaded/Math.max(1,progress.total)*100));}).then(parsed=>{
       if(generation!==importGeneration.current)return;
       if(parsed.kind==='project')applyProject(parsed.state);
-      else {setMigrationNotice(undefined);handleApplyTransform(parsed.structure);setVisualSettings(prev=>({...prev,volumeSettings:parsed.structure.volumeData?defaultVolumeSettings(parsed.structure.volumeData):undefined}));}
+      else {setMigrationNotice(undefined);handleApplyTransform(parsed.structure);setVisualSettings(prev=>({...prev,bondSettings:undefined,volumeSettings:parsed.structure.volumeData?defaultVolumeSettings(parsed.structure.volumeData):undefined}));}
       setRecovery(null);handleSetMeasureMode('none');crystalSceneRef.current?.clearMeasurements();setErrorMessage(null);
     }).catch(error=>{if(generation===importGeneration.current)setErrorMessage(`解析失败 [${file.name}]: ${error instanceof Error?error.message:String(error)}`);})
       .finally(()=>{if(generation===importGeneration.current)setIsImporting(false);});

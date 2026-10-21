@@ -27,6 +27,18 @@ test('versioned project round trip preserves all source data and zero-valued ren
   assert.throws(() => parseProject(encodeProject(state).replace('"version":2', '"version":9000')), /版本/);
   assert.deepEqual(parseProject(encodeProject(state).replace('"version":2','"version":1')),JSON.parse(JSON.stringify(state)));
 });
+test('bond rules survive project round trip and undo, while invalid lengths reject imports', () => {
+  const state = projectFixture();
+  const history = new ProjectHistory(); history.observe(state);
+  state.visualSettings.bondSettings = { enabled: true, rules: [{ id: 'C-C', atom1: 'C', atom2: 'C', searchMode: 'pair',
+    boundaryMode: 3, searchByLabel: false, minLength: 1.2, maxLength: 1.5, showPolyhedra: false }] };
+  history.observe(state);
+  assert.deepEqual(parseProject(encodeProject(state)).visualSettings.bondSettings, state.visualSettings.bondSettings);
+  assert.equal(history.undo()!.visualSettings.bondSettings, undefined);
+  assert.equal(history.redo()!.visualSettings.bondSettings!.rules[0].maxLength, 1.5);
+  state.visualSettings.bondSettings.rules[0].maxLength = -1;
+  assert.throws(() => parseProject(JSON.stringify({ kind: 'CrystalCraftProject', version: 2, state })), /化学键规则/);
+});
 test('hostile projects reject invalid nested values before altering an application', () => {
   const mutations = [
     (p: any) => p.visualSettings.atomStacks = 1e8,

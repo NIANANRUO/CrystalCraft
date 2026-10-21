@@ -22,6 +22,9 @@ import {
   PolyhedraCenterMode,
   DEFAULT_POLYHEDRA_SETTINGS 
 } from '../types/crystal';
+import type { BondSettings } from '../types/crystal';
+import { assertBondSettings, defaultBondRules } from '../utils/bonding';
+import { BondEditor } from './BondEditor';
 import { getElement, getDisplayRadius } from '../constants/elements';
 import { useDraggable } from '../hooks/useDraggable';
 import { useModalDialog } from '../hooks/useModalDialog';
@@ -116,12 +119,21 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
 
   // Backup initial settings for Cancel action
   const [initialSettingsSnapshot] = useState<VisualSettings>(() => ({
-    textureStrength:undefined,textureScale:undefined,atomSpecular: undefined, atomShininess: undefined, atomStacks: undefined, atomSlices: undefined,
+    bondSettings: undefined,textureStrength:undefined,textureScale:undefined,atomSpecular: undefined, atomShininess: undefined, atomStacks: undefined, atomSlices: undefined,
     atomStyle: undefined, radiiType: undefined, hideNonbonding: undefined, labelOffsetZ: undefined, outlineWidth: undefined,volumeSettings:undefined,ionicRadii:undefined,
     ...JSON.parse(JSON.stringify(visualSettings))
   }));
   const [initialStructureSnapshot] = useState<CrystalStructure | null>(() => structure ? JSON.parse(JSON.stringify(structure)) : null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [bondDraft, setBondDraft] = useState<BondSettings>(() => visualSettings.bondSettings
+    ? structuredClone(visualSettings.bondSettings)
+    : { enabled: false, rules: defaultBondRules(structure, visualSettings.bondTolerance, visualSettings.polyhedraSettings?.centralElements) });
+  const [bondsEdited, setBondsEdited] = useState(false);
+  const bondError = useMemo(() => {
+    if (!bondsEdited) return null;
+    try { assertBondSettings(bondDraft); return null; }
+    catch (error) { return error instanceof Error ? error.message : '化学键规则无效。'; }
+  }, [bondDraft, bondsEdited]);
 
   // Polyhedra settings working copy
   const currentPolySettings: PolyhedraSettings = visualSettings.polyhedraSettings || DEFAULT_POLYHEDRA_SETTINGS;
@@ -372,8 +384,17 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
   };
 
   const handleOk = () => {
+    if (bondError) { setActiveTab('bonds'); return; }
+    if (bondsEdited) onUpdateVisualSettings({ bondSettings: bondDraft });
     commitPolySettings();
     onClose();
+  };
+
+  const handleApply = () => {
+    if (bondError) { setActiveTab('bonds'); return; }
+    if (bondsEdited) onUpdateVisualSettings({ bondSettings: bondDraft });
+    commitPolySettings();
+    setSaveMessage('已应用到视图；OK 确认，Cancel 恢复打开窗口前的状态。');
   };
 
   const handleCancel = () => {
@@ -520,7 +541,7 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
         aria-modal="true"
         aria-label="Structure properties"
         tabIndex={-1}
-        className="bg-[#f8fafc] border border-[#cbd5e1] rounded-lg shadow-2xl max-w-xl w-full flex flex-col max-h-[92vh] text-xs text-slate-800 font-sans"
+        className={`bg-[#f8fafc] border border-[#cbd5e1] rounded-lg shadow-2xl ${activeTab === 'bonds' ? 'max-w-[940px]' : 'max-w-xl'} w-full flex flex-col max-h-[92vh] text-xs text-slate-800 font-sans`}
         style={{
           transform: `translate(${position.x}px, ${position.y}px)`
         }}
@@ -533,7 +554,7 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
           title="按住鼠标左键可拖动此窗口"
         >
           <span className="font-bold text-slate-800 text-[11px] tracking-wide truncate">
-            Properties - {structure?.title || 'Structure'}
+            {activeTab === 'bonds' ? 'Bonds' : 'Properties'} - {structure?.title || 'Structure'}
           </span>
           <button onClick={handleCancel} aria-label="取消并关闭属性窗口" className="text-slate-500 hover:text-slate-800 font-bold p-1 cursor-pointer shrink-0">
             <X size={14} />
@@ -1533,11 +1554,14 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
           {/* ================= BONDS TAB ================= */}
           {activeTab === 'bonds' && (
             <div className="space-y-3">
+              <BondEditor structure={structure} settings={bondDraft} tolerance={visualSettings.bondTolerance}
+                showBoundaryAtoms={visualSettings.showBoundaryAtoms} onBoundaryChange={showBoundaryAtoms => onUpdateVisualSettings({ showBoundaryAtoms })}
+                onChange={settings => { setBondDraft(settings); setBondsEdited(true); setSaveMessage(null); }} error={bondError} />
               <fieldset className="border border-[#cbd5e1] rounded p-3 bg-[#fafafa] space-y-3">
                 <legend className="px-1.5 font-bold text-slate-700 text-[11px]">Bonds Specification (化学键规格)</legend>
                 
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-700">成键距离容差系数 (Tolerance):</span>
+                  <span className="font-semibold text-slate-700">自动成键容差 (Tolerance):{bondDraft.enabled && <span className="ml-1 font-normal text-slate-500">仅自动模式</span>}</span>
                   <div className="flex items-center gap-2">
                     <span className="font-mono">{visualSettings.bondTolerance.toFixed(2)}</span>
                     <input
@@ -1545,9 +1569,10 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
                       min="0.8"
                       max="1.6"
                       step="0.05"
+                      disabled={bondDraft.enabled}
                       value={visualSettings.bondTolerance}
                       onChange={(e) => onUpdateVisualSettings({ bondTolerance: parseFloat(e.target.value) })}
-                      className="w-28 h-1 bg-slate-200 rounded cursor-pointer accent-blue-600"
+                      className="w-28 h-1 bg-slate-200 rounded cursor-pointer accent-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
                     />
                   </div>
                 </div>
@@ -1655,7 +1680,8 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={handleOk}
-              className="px-4 py-1 rounded bg-white hover:bg-slate-100 border border-[#cbd5e1] font-semibold text-slate-800 shadow-2xs cursor-pointer transition"
+              disabled={!!bondError}
+              className="px-4 py-1 rounded bg-white hover:bg-slate-100 border border-[#cbd5e1] font-semibold text-slate-800 shadow-2xs cursor-pointer transition disabled:opacity-40"
             >
               OK
             </button>
@@ -1666,12 +1692,19 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
               Cancel
             </button>
             <button
+              onClick={handleApply}
+              disabled={!!bondError}
+              className="px-3 py-1 rounded bg-white hover:bg-slate-100 border border-[#cbd5e1] text-slate-700 shadow-2xs cursor-pointer transition disabled:opacity-40"
+            >
+              Apply
+            </button>
+            {activeTab !== 'bonds' && <button
               onClick={handleSaveAsDefault}
               className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 border border-[#cbd5e1] text-slate-700 text-[11px] shadow-2xs cursor-pointer transition"
               title="保存当前设置为全局默认配置"
             >
               Save as Default
-            </button>
+            </button>}
           </div>
 
         </div>

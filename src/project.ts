@@ -1,4 +1,5 @@
 import type { CrystalStructure, VisualSettings, PresetMaterialType, RenderMode } from './types/crystal';
+import { assertBondSettings } from './utils/bonding';
 import { assertStructureValid, MAX_FILE_BYTES } from './utils/validation';
 import { MATERIALS } from './config';
 import {retiredMaterialFallback,materialMigrationNotice} from './materialCatalog';
@@ -41,6 +42,7 @@ export function validateProjectState(value: unknown): asserts value is ProjectSt
   if (!MATERIALS.includes(value.materialType) || !['ball-and-stick', 'space-filling', 'stick', 'wireframe'].includes(value.renderMode) || typeof value.showLattice !== 'boolean' || typeof value.showAxes !== 'boolean') throw new Error('项目视图配置无效。');
   const s = value.visualSettings;
   if (!object(s)) throw new Error('项目缺少显示设置。');
+  if (s.bondSettings !== undefined) assertBondSettings(s.bondSettings);
   if(s.volumeSettings!==undefined)assertVolumeSettings(s.volumeSettings,structure.volumeData);
   if(s.ionicRadii!==undefined){
     if(!object(s.ionicRadii)||Object.keys(s.ionicRadii).length>2000)throw new Error('项目离子半径设置无效。');

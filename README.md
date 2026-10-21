@@ -1,6 +1,6 @@
 # CrystalCraft
 
-纯前端晶体结构查看与编辑工具，使用 React、TypeScript、Three.js、Tailwind 4 和 Vite。当前版本 0.5.1，源码采用 MIT。导入文件在浏览器内解析，不需要后端、API Key 或数据库。支持部署在 GitHub Pages 的用户主页、仓库子路径或自定义域名。
+纯前端晶体结构查看与编辑工具，使用 React、TypeScript、Three.js、Tailwind 4 和 Vite。当前版本 0.6.0，源码采用 MIT。导入文件在浏览器内解析，不需要后端、API Key 或数据库。支持部署在 GitHub Pages 的用户主页、仓库子路径或自定义域名。
 
 首页保持空白，点击“选择结构文件”或拖入本机文件开始。源码与发布包不内置用户计算结构；恢复记录仅保存在当前浏览器，必须主动选择恢复。在线地址：https://niananruo.github.io/CrystalCraft/ 。
 
@@ -52,6 +52,14 @@ Windows 端到端测试使用已安装的 Microsoft Edge；Linux/macOS 先执行
 - 属性窗口及全部原有标签；高清 PNG、透明背景、画幅比例和 Normal/High/Ultra 选项，保留 1080p 至 8K 入口。
 
 快捷键：Ctrl/Cmd+S 保存项目，Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z 或 Ctrl/Cmd+Y 重做，Ctrl/Cmd+O 导入，Ctrl/Cmd+E 周期表替换，Ctrl/Cmd+P 原子属性，Delete 删除主选原子。在输入框和模态窗口中不会触发页面级编辑快捷键。属性窗口 OK 提交，Cancel、右上角关闭和 Escape 撤销该次窗口内的结构与视觉预览。
+
+### Bonds 原子对规则编辑
+
+从 Edit → Bonds...、侧栏 Bonds 编辑… 或属性窗口的 Bonds 页进入。规则列表支持 New、Delete、Clear、上下移动和按当前元素半径/容差自动生成；选中一行后编辑 A1/A2、Min./Max.（Å）、Search by label、Boundary 和 Poly.。默认继续使用全局容差自动成键；编辑规则后启用列表模式，满足任意一条规则即可成键，空列表不生成自动键，手动添加的键保留。全局键粗细、样式和配色继续有效。Apply 更新视图，OK 确认，Cancel/关闭/Escape 恢复打开窗口前的状态；规则随项目文件、本机恢复、撤销与重做保存。导入新的结构文件回到自动模式。
+
+搜索模式与方向语义参照 [VESTA 官方手册第 8 章](https://jp-minerals.org/vesta/en/doc/VESTAch8.html)：按 A1–A2 搜索、搜索 A1 的所有邻接原子，或搜索所有原子对。Boundary 1 仅使用当前原子；2 只从当前边界内的 A1 补全 A2；3 从已显示原子递归补全。周期扩展由“周期边界补全”总开关控制，适用于斜晶胞及超出旧边界边距的配位原子。无限周期网络达到显示/搜索预算时明确报错，可调整为 Boundary 1/2 或缩小键长后恢复。单条键长范围为 0 ≤ Min. ≤ Max. ≤ 100 Å，Max. > 0，规则最多 2,000 条。
+
+Poly. 将该规则的 A1 指定为配位中心，配体按同一规则的元素/标签、键长和边界筛选；在 Polyhedra 页开启显示并设置外观。Search molecules 不指定中心，不创建多面体。CIF 使用位点标签，未提供标签的原子使用“元素 + 原子 ID”；周期副本沿用原位点标签。单元与浏览器回归覆盖规则筛选、周期补全、多面体、项目保存/撤销和窄屏编辑。
 
 手机宽度下左侧面板默认收起，点击左上角箭头展开；工具栏和原子表可横向滚动。横竖屏切换会调整相机画幅并保留观察方向。
 

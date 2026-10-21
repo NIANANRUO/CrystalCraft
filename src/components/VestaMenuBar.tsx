@@ -249,6 +249,10 @@ export const VestaMenuBar: React.FC<VestaMenuBarProps> = ({
                 <span className="text-[10px] bg-blue-50 text-blue-700 px-1 rounded font-bold">VESTA</span>
               </button>
               <button
+                onClick={() => { onOpenProperties?.('bonds'); setOpenMenu(null); }}
+                className="w-full text-left px-3 py-1.5 hover:bg-[#f3f4f6] text-blue-700 font-medium"
+              >Bonds... (化学键规则)</button>
+              <button
                 onClick={() => { if (onOpenProperties) onOpenProperties('atoms'); setOpenMenu(null); }}
                 className="w-full text-left px-3 py-1.5 hover:bg-[#f3f4f6] flex items-center justify-between"
               >

@@ -113,7 +113,7 @@ export const Canvas3D: React.FC<Canvas3DProps> = ({
         if (showLattice !== prev?.showLattice) scene.toggleLattice(showLattice);
         if (showAxes !== prev?.showAxes) scene.toggleAxes(showAxes);
         if (bgColor !== prev?.bgColor) scene.setBackgroundColor(bgColor);
-        if (visualSettings !== prev?.visualSettings) scene.setVisualSettings(visualSettings);
+        if (visualSettings !== prev?.visualSettings) scene.setVisualSettings({ bondSettings: undefined, ...visualSettings });
         scene.setSelectedAtomIds((selectedAtoms ?? (selectedAtom ? [selectedAtom] : [])).map(atom => atom.originalId ?? atom.id), false);
       });
       previousState.current = { structure, materialType, renderMode, showLattice, showAxes, bgColor, visualSettings };

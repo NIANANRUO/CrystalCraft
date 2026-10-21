@@ -17,6 +17,8 @@ test('homepage starts empty; importing and recovery require explicit user action
   await expect(page.locator('tbody tr')).toHaveCount(0);
   await expect(page.getByRole('button',{name:'恢复上次项目',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'清除本机恢复记录',exact:true}).click();
+  // IndexedDB deletion is asynchronous; reload only after the UI confirms it.
+  await expect(page.getByRole('button',{name:'清除本机恢复记录',exact:true})).toHaveCount(0);
   await page.reload();
   await expect(page.getByLabel('空白工作区')).toBeVisible();
   await expect(page.getByRole('button',{name:'恢复上次项目',exact:true})).toHaveCount(0);

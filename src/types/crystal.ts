@@ -122,7 +122,25 @@ export interface MeasurementItem {
 
 export type BondColorMode = 'uniform' | 'dark' | 'split';
 
+export interface BondRule {
+  id: string;
+  searchMode: 'pair' | 'all' | 'molecule';
+  boundaryMode: 1 | 2 | 3;
+  searchByLabel: boolean;
+  atom1: string;
+  atom2: string;
+  minLength: number;
+  maxLength: number;
+  showPolyhedra: boolean;
+}
+
+export interface BondSettings {
+  enabled: boolean;
+  rules: BondRule[];
+}
+
 export interface VisualSettings {
+  bondSettings?: BondSettings; // Absent/disabled keeps the legacy automatic cutoff
   textureStrength?: number;
   textureScale?: number;
   volumeSettings?: VolumeSettings;
