@@ -15,17 +15,17 @@
     "test:performance": "node tests/performance.mjs"
   },
   "dependencies": {
-    "lucide-react": "^1.16.0",
+    "lucide-react": "^1.59.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "three": "^0.174.0"
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "4.3.3",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
-    "@types/three": "^0.174.0",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^4.3.4",
     "esbuild": "0.25.12",
     "postcss": "^8.5.30",
