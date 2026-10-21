@@ -1,6 +1,6 @@
 import { cifTensor, rotateTensor, displacementAxes, Tensor } from '../utils/displacement';
 import { CrystalStructure, Atom, Vec3 } from '../types/crystal';
-import { buildLatticeMatrix, calculateLatticeFromMatrix, cartesianToFractional, fractionalToCartesian } from '../utils/math';
+import { buildLatticeMatrix, calculateLatticeFromMatrix, cartesianToFractional, fractionalToCartesian, invertMatrix } from '../utils/math';
 import { assertAtomCount, assertElementToken, assertFiniteVector, assertStructureValid, assertTextSize, parseFiniteNumber, sanitizeSingleLine } from '../utils/validation';
 import { ELEMENTS } from '../constants/elements';
 import { SPACE_GROUP_NUMBERS } from './spaceGroups';
@@ -106,6 +106,53 @@ function cleanElement(value: string | undefined, isTypeSymbol: boolean): string 
 }
 
 type Symmetry = { rows: [number, number, number][]; translation: number[] };
+// Compare symmetry images in Cartesian Å, including periodic equivalence. Decimal
+// hashes split special sites such as (0.33333333, 0.66666667, z) into fake atoms.
+// This tolerance only merges images of ONE source site, never distinct rows.
+const SYMMETRY_SITE_TOLERANCE = 1e-3;
+function coordinateRounding(value: string): number {
+  const [mantissa, exponent = '0'] = value.replace(/\(\d+\)/g, '').replace(/[dD]/g, 'e').toLowerCase().split('e');
+  const places = mantissa.split('.')[1]?.length ?? 0;
+  return .5 * 10 ** (Number(exponent) - places);
+}
+
+function sameSymmetrySite(a: Vec3, b: Vec3, first: Symmetry, second: Symmetry, matrix: [Vec3, Vec3, Vec3], rounding: number[]): boolean {
+  const delta = [a.x - b.x, a.y - b.y, a.z - b.z].map(value => value - Math.round(value));
+  // Both images share the SAME source coordinate. Propagate its last-decimal
+  // rounding through (R1 - R2), so free coordinates cancel instead of loosening
+  // every axis. This also handles five-decimal planar/hexagonal CIF exports.
+  if (delta.some((value, i) => {
+    const bound = first.rows[i].reduce((sum, coefficient, j) => sum + Math.abs(coefficient - second.rows[i][j]) * rounding[j], 1e-9);
+    return Math.abs(value) > Math.min(1e-4, bound);
+  })) return false;
+  const cart = fractionalToCartesian({ x: delta[0], y: delta[1], z: delta[2] }, matrix);
+  return cart.x * cart.x + cart.y * cart.y + cart.z * cart.z <= SYMMETRY_SITE_TOLERANCE ** 2;
+}
+
+function validateSiteMultiplicity(loop: Loop, row: string[], name: string, imageCount: number, operationCount: number): void {
+  if (operationCount % imageCount !== 0) throw new Error(`${name} 的对称等价位点无法可靠合并，请检查坐标精度与对称操作表。`);
+  const declared = (tag: string) => {
+    const index = loop.headers.indexOf(tag);
+    if (index === -1 || ['.', '?'].includes(row[index])) return undefined;
+    const value = cifNumber(row[index], `${name} ${tag}`);
+    if (!Number.isSafeInteger(value) || value < 1 || value > 192) throw new Error(`${name} 的对称多重度/位点对称阶必须为 1–192 的整数。`);
+    return value;
+  };
+  const multiplicity = declared('_atom_site_site_symmetry_multiplicity');
+  const order = declared('_atom_site_site_symmetry_order');
+  const actualOrder = operationCount / imageCount;
+  if (multiplicity !== undefined && multiplicity !== imageCount) throw new Error(`${name} 的对称展开数量 ${imageCount} 与声明的位点多重度 ${multiplicity} 不一致，请检查坐标与对称操作表。`);
+  if (order !== undefined && order !== actualOrder) throw new Error(`${name} 的位点对称阶与对称展开结果不一致，请检查坐标与对称操作表。`);
+  // IUCr deprecated this legacy item because SHELXL/OLEX2 used it for the site
+  // symmetry ORDER, while other writers used Wyckoff MULTIPLICITY. Honor modern
+  // unambiguous declarations first; otherwise accept either validated meaning.
+  // https://www.iucr.org/__data/iucr/cifdic_html/1/cif_core.dic/Iatom_site_symmetry_multiplicity.html
+  if (multiplicity === undefined && order === undefined) {
+    const legacy = declared('_atom_site_symmetry_multiplicity');
+    if (legacy !== undefined && legacy !== imageCount && legacy !== actualOrder) throw new Error(`${name} 的旧版多重度字段 ${legacy} 与展开位点数 ${imageCount}、位点对称阶 ${actualOrder} 均不一致，请检查坐标与对称操作表。`);
+  }
+}
+
 const wrap = (value: number) => {
   const normalized = value - Math.floor(value);
   return normalized > 1 - 1e-9 || normalized < 1e-9 ? 0 : normalized;
@@ -257,7 +304,7 @@ export function parseCIF(content: string, filename = 'structure.cif'): CrystalSt
     const symbolIndex = loop.headers.indexOf('_atom_site_type_symbol');
     const labelIndex = loop.headers.indexOf('_atom_site_label');
     const occupancyIndex = loop.headers.indexOf('_atom_site_occupancy');
-    const multiplicityIndex = loop.headers.indexOf('_atom_site_symmetry_multiplicity');
+    const inverse = hasFractional ? null : invertMatrix(matrix);
     for (const row of loop.rows) {
       assertAtomCount(++sourceCount);
       const element = cleanElement(row[symbolIndex] ?? row[labelIndex], symbolIndex !== -1);
@@ -265,6 +312,8 @@ export function parseCIF(content: string, filename = 'structure.cif'): CrystalSt
       const indices = hasFractional ? fracIndices : cartIndices;
       const vector: Vec3 = { x: cifNumber(row[indices[0]], `${name} x`), y: cifNumber(row[indices[1]], `${name} y`), z: cifNumber(row[indices[2]], `${name} z`) };
       const fractional = hasFractional ? vector : cartesianToFractional(vector, matrix);
+      const inputRounding = indices.map(i => coordinateRounding(row[i]));
+      const rounding = inverse ? inverse.map(v => [v.x, v.y, v.z].reduce((sum, coefficient, i) => sum + Math.abs(coefficient) * inputRounding[i], 0)) : inputRounding;
       assertFiniteVector(fractional, `${name} 分数坐标`);
       const occupancy = occupancyIndex === -1 ? 1 : cifNumber(row[occupancyIndex], `${name} 占据率`);
       if (occupancy < 0 || occupancy > 1) throw new Error(`${name} 占据率必须在 0 到 1 之间。`);
@@ -283,18 +332,14 @@ export function parseCIF(content: string, filename = 'structure.cif'): CrystalSt
         const coords = operation.rows.map((r, i) => wrap(r[0] * fractional.x + r[1] * fractional.y + r[2] * fractional.z + operation.translation[i]));
         return { x: coords[0], y: coords[1], z: coords[2] };
       }) : [fractional];
-      const seen = new Set<string>();
+      const uniqueSites: { coords: Vec3; operation: Symmetry }[] = [];
       for (const [imageIndex, coords] of images.entries()) {
-        const key = `${element}|${occupancy}|${coords.x.toFixed(8)}|${coords.y.toFixed(8)}|${coords.z.toFixed(8)}`;
-        if (operations.length > 1 && seen.has(key)) continue;
-        seen.add(key);
+        if (operations.length > 1 && uniqueSites.some(site => sameSymmetrySite(site.coords, coords, site.operation, operations[imageIndex], matrix, rounding))) continue;
+        uniqueSites.push({ coords, operation: operations[imageIndex] });
         assertAtomCount(atoms.length + 1);
         atoms.push({ id: atoms.length + 1, element, name, fractional: coords, cartesian: fractionalToCartesian(coords, matrix), occupancy, selected: false, displacement: displacement && operations.length > 1 ? rotateTensor(displacement, matrix, operations[imageIndex].rows) : displacement });
       }
-      if (multiplicityIndex !== -1 && !['.', '?'].includes(row[multiplicityIndex])) {
-        const multiplicity = cifNumber(row[multiplicityIndex], `${name} 对称多重度`);
-        if (multiplicity !== seen.size) throw new Error(`${name} 的对称展开数量与声明的多重度不一致，请检查对称操作表。`);
-      }
+      validateSiteMultiplicity(loop, row, name, uniqueSites.length, operations.length || 1);
     }
   }
   const structure: CrystalStructure = { title, lattice, atoms, isPeriodic: true, format: 'cif' };
