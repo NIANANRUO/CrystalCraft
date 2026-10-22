@@ -1,0 +1,77 @@
+name: Restore verified Pages release
+on:
+  workflow_dispatch:
+    inputs:
+      verified_run_id:
+        description: Successful Deploy GitHub Pages run containing the verified archive
+        required: true
+        type: string
+      release_sha:
+        description: Full commit SHA of that verified release
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  restore:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    env:
+      RESTORE_RUN_ID: ${{ inputs.verified_run_id }}
+      EXPECTED_COMMIT: ${{ inputs.release_sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Check archive workflow provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          if (!/^\d+$/.test(process.env.RESTORE_RUN_ID) || !/^[a-f0-9]{40}$/.test(process.env.EXPECTED_COMMIT)) throw new Error('Invalid run ID or commit SHA');
+          const url = `https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.RESTORE_RUN_ID}`;
+          const response = await fetch(url, {headers:{Authorization:`Bearer ${process.env.GH_TOKEN}`,Accept:'application/vnd.github+json'}});
+          if (!response.ok) throw new Error('Cannot verify archive workflow run');
+          const run = await response.json();
+          if (run.conclusion !== 'success' || run.head_branch !== 'main' || run.path !== '.github/workflows/pages.yml' || !['push','workflow_dispatch'].includes(run.event)) throw new Error('Archive must come from a successful trusted Pages release');
+          JS
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-site-${{ inputs.release_sha }}
+          path: release-bundle
+          run-id: ${{ inputs.verified_run_id }}
+          github-token: ${{ github.token }}
+      - run: node scripts/verify-release.mjs release-bundle/dist "$EXPECTED_COMMIT" --source-root release-bundle
+      - name: Audit archived runtime dependencies without installing old build tools
+        working-directory: release-bundle
+        run: npm audit --omit=dev --audit-level=moderate
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: release-bundle/dist
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+      - run: npm run test:deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deployment.outputs.page_url }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: restored-release-acceptance
+          path: test-results/

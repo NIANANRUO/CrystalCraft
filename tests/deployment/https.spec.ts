@@ -11,9 +11,13 @@ test('HTTPS first load, reload, local import, and data/image downloads', async (
   expect(manifest.ok()).toBeTruthy();
   const info = await manifest.json();
   expect(info.name).toBe('crystal-craft-web'); expect(info.version).toMatch(/^\d+\.\d+\.\d+$/);
+  expect(info.commit).toBe(process.env.EXPECTED_COMMIT);
+  expect(info.sourceDirty).toBe(false);
+  await expect(page.locator('meta[http-equiv="Content-Security-Policy"]')).toHaveAttribute('content', /script-src 'self';/);
   expect(Object.keys(info.assets).length).toBeGreaterThan(0);
-  for (const [path, expectedHash] of Object.entries(info.assets)) {
-    expect(path).toMatch(/^assets\/[A-Za-z0-9_.-]+\.(js|css)$/);
+  expect(info.files['index.html']).toMatch(/^[a-f0-9]{64}$/);
+  for (const [path, expectedHash] of Object.entries(info.files)) {
+    expect(path).toMatch(/^(?:index\.html|LICENSE\.txt|THIRD_PARTY_NOTICES\.txt|assets\/[A-Za-z0-9_.-]+\.(?:js|css))$/);
     const response = await page.request.get(`./${path}`);
     expect(response.ok()).toBeTruthy();
     expect(createHash('sha256').update(await response.body()).digest('hex')).toBe(expectedHash);

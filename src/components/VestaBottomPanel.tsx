@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Table, FileText, Info } from 'lucide-react';
 import { CrystalStructure, Atom } from '../types/crystal';
+import { cellComposition } from '../utils/composition';
 
 interface VestaBottomPanelProps {
   structure: CrystalStructure | null;
@@ -32,13 +33,7 @@ export const VestaBottomPanel: React.FC<VestaBottomPanelProps> = ({
   const baseAtoms = useMemo(() => new Map(structure?.atoms.map(atom => [atom.id, atom]) || []), [structure]);
 
   // Stoichiometry formula
-  const formulaMap: Record<string, number> = {};
-  structure?.atoms.forEach(a => {
-    formulaMap[a.element] = (formulaMap[a.element] || 0) + 1;
-  });
-  const formulaStr = Object.entries(formulaMap)
-    .map(([elem, count]) => `${elem}${count > 1 ? count : ''}`)
-    .join('');
+  const formulaStr = cellComposition(structure?.atoms ?? []);
 
   return (
     <div className="shrink-0 min-w-0 border-t border-[#d1d5db] bg-white select-none text-xs flex flex-col z-20 shadow-xs">
@@ -106,7 +101,7 @@ export const VestaBottomPanel: React.FC<VestaBottomPanelProps> = ({
             Title: {structure?.title || '未导入结构'}
           </span>
           <span>•</span>
-          <span>Formula: {formulaStr || '—'}</span>
+          <span title="按位点占据率加权的晶胞组成，未约化">Composition: {formulaStr || '—'}</span>
         </div>
 
         {/* Right: Collapse / Expand Toggle Button */}

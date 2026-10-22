@@ -27,7 +27,7 @@ test('CIF worker imports historical site-order metadata and rounded hexagonal po
     await expect(page.locator('tbody tr')).toHaveCount(count);
     await expect(page.getByRole('alert')).toHaveCount(0);
   }
-  await expect(page.getByText('Formula: Zr6Si2N4', { exact: true })).toBeVisible();
+  await expect(page.getByText('Composition: Zr6Si2N4', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 

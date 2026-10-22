@@ -1,6 +1,7 @@
 import {NEW_MATERIALS} from './materialCatalog';
 import { encodeProject, parseProject, ProjectHistory, ProjectState, MAX_PROJECT_BYTES } from './project';
-import { readRecovery, writeRecovery } from './projectStorage';
+import { readRecovery, writeRecovery, listRecovery, recoveryWorkspace, type RecoveryEntry } from './projectStorage';
+import { freezeStructurePayloads } from './projectSnapshot';
 import { parseImportedBlob, cancelImport } from './importClient';
 import { MAX_VOLUME_BYTES, volumeKind, defaultVolumeSettings } from './volume/data';
 import React, { useState, useEffect, useRef } from 'react';
@@ -101,6 +102,12 @@ export function App() {
   const history = useRef(new ProjectHistory());
   const [, refreshHistory] = useState(0);
   const [recovery, setRecovery] = useState<ProjectState | null>(null);
+  const [workspace] = useState(recoveryWorkspace);
+  const [recoveryId, setRecoveryId] = useState<string>('legacy');
+  const [recoveryEntries, setRecoveryEntries] = useState<RecoveryEntry[]>([]);
+  const [storageRetry, setStorageRetry] = useState(0);
+  const pendingSave = useRef<(() => void) | null>(null);
+  const unsaved = useRef(false);
   const [storageStatus, setStorageStatus] = useState('等待导入结构');
   const [migrationNotice,setMigrationNotice]=useState<string|undefined>(startup.migrationNotice);
   const [isImporting, setIsImporting] = useState(false);
@@ -108,7 +115,13 @@ export function App() {
   const importGeneration = useRef(0);
   const [recoveryReady, setRecoveryReady] = useState(false);
   const project = structure ? { structure, visualSettings, materialType, renderMode, showLattice, showAxes } : null;
+  const propertyBaseline = useRef<{key:string;volume:unknown;source:unknown}|null>(null);
+  const propertyKey = isPropertiesOpen ? JSON.stringify(project ? {...project,structure:{...project.structure,volumeData:undefined,sourceCif:undefined}} : null) : '';
+  if (isPropertiesOpen && !propertyBaseline.current) propertyBaseline.current = {key:propertyKey,volume:structure?.volumeData,source:structure?.sourceCif};
+  if (!isPropertiesOpen) propertyBaseline.current = null;
+  const propertiesDirty = !!propertyBaseline.current && (propertyBaseline.current.key !== propertyKey || propertyBaseline.current.volume !== structure?.volumeData || propertyBaseline.current.source !== structure?.sourceCif);
   const applyProject = (state: ProjectState) => {
+    freezeStructurePayloads(state.structure);
     setMigrationNotice(state.migrationNotice);
     cancelImport(); importGeneration.current++; setIsImporting(false);
     setStructure(state.structure); setVisualSettings(state.visualSettings); setMaterialType(state.materialType);
@@ -117,28 +130,55 @@ export function App() {
   };
   useEffect(() => {
     let active = true;
-    readRecovery().then(text => { if (active && text) setRecovery(parseProject(text)); })
+    const generation = importGeneration.current;
+    (async () => {
+      let id = workspace.previousId ?? 'legacy';
+      let text = await readRecovery(id);
+      if (!text && id !== 'legacy') { id = 'legacy'; text = await readRecovery(id); }
+      if (active && text && generation === importGeneration.current) {
+        setRecoveryId(id);
+        try { setRecovery(parseProject(text)); }
+        catch { setStorageStatus('上次恢复记录损坏；可选择其他恢复副本或项目文件'); }
+      }
+      const entries = await listRecovery(); if (active) setRecoveryEntries(entries);
+    })()
       .catch(() => { if (active) setStorageStatus('恢复记录不可用；请使用项目文件保存'); })
       .finally(() => { if (active) setRecoveryReady(true); });
     return () => { active = false; cancelImport(); };
   }, []);
   useEffect(() => {
     if (!project || isPropertiesOpen) return;
+    unsaved.current = true;
     history.current.observe(project); refreshHistory(n => n + 1);
   }, [structure, visualSettings, materialType, renderMode, showLattice, showAxes, isPropertiesOpen]);
   useEffect(() => {
     if (!project || !recoveryReady || recovery || isPropertiesOpen || isImporting) return;
     setStorageStatus('正在自动保存…');
+    unsaved.current = true;
     let active = true;
-    const timer = setTimeout(() => {
+    let started = false;
+    const save = () => {
+      if (started) return; started = true; pendingSave.current = null;
       try {
         const text = encodeProject(project);
-        writeRecovery(text).then(() => { if (active) setStorageStatus('已自动保存到本机'); })
-          .catch(() => { if (active) setStorageStatus('自动保存失败；请保存项目文件'); });
-      } catch { setStorageStatus('自动保存失败；请保存项目文件'); }
-    }, 700);
-    return () => { active = false; clearTimeout(timer); };
-  }, [structure, visualSettings, materialType, renderMode, showLattice, showAxes, recoveryReady, recovery, isPropertiesOpen, isImporting]);
+        writeRecovery(text, workspace.id, project.structure.title, recoveryId).then(replacedId => { if (active) { unsaved.current = false; setStorageStatus('已自动保存到本机'); if (replacedId) setRecoveryEntries(entries => entries.filter(e => e.id !== replacedId)); } })
+          .catch(error => { if (active) setStorageStatus(`自动保存失败；${error instanceof Error ? error.message : '请保存项目文件'}`); });
+      } catch { if (active) setStorageStatus('自动保存失败；请保存项目文件'); }
+    };
+    pendingSave.current = save;
+    const timer = setTimeout(save, 700);
+    const flush = () => { if (document.visibilityState === 'hidden') { clearTimeout(timer); save(); } };
+    document.addEventListener('visibilitychange', flush);
+    return () => { active = false; clearTimeout(timer); if (pendingSave.current === save) pendingSave.current = null; document.removeEventListener('visibilitychange', flush); };
+  }, [structure, visualSettings, materialType, renderMode, showLattice, showAxes, recoveryReady, recovery, isPropertiesOpen, isImporting, storageRetry]);
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      pendingSave.current?.();
+      if (unsaved.current || propertiesDirty || isImporting) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [propertiesDirty, isImporting, structure]);
   const moveHistory = (direction: 'undo' | 'redo') => {
     if (isPropertiesOpen || !project) return;
     const state = history.current[direction]();
@@ -269,6 +309,7 @@ export function App() {
   // Handle VESTA Unit Cell Transformation
   const handleApplyTransform = (transformed: CrystalStructure) => {
     assertStructureValid(transformed);
+    freezeStructurePayloads(transformed);
     setStructure(transformed);
     const firstAtom = transformed.atoms[0] || null;
     setSelectedAtom(firstAtom);
@@ -325,7 +366,7 @@ export function App() {
     try {
       const imageUrl = await crystalSceneRef.current.renderHighResImage(options);
       const title = structure?.title ? structure.title.replace(/[\s\/\\]+/g, '_') : 'crystal';
-      const filename = `${title}_${options.width}px_${options.transparent ? 'transparent' : 'opaque'}.png`;
+      const filename = `${title}_${options.width}px_${options.transparent ? 'transparent' : 'opaque'}.${options.format === 'tiff' ? 'tiff' : 'png'}`;
       try { downloadFile(imageUrl, filename); } finally { setTimeout(() => URL.revokeObjectURL(imageUrl), 1000); }
     } catch (err: any) {
       setErrorMessage('渲染图像导出失败: ' + err.message);
@@ -376,20 +417,24 @@ export function App() {
   };
 
   const handleQuickReplace = (element: string) => {
-    if (!structure || !selectedAtom) return;
+    if (!structure) return;
+    const ids = new Set((selectedAtoms.length ? selectedAtoms : selectedAtom ? [selectedAtom] : []).map(a => a.originalId ?? a.id));
+    if (!ids.size) return;
     const updatedAtoms = structure.atoms.map(a => 
-      a.id === (selectedAtom.originalId ?? selectedAtom.id) ? { ...a, element } : a
+      ids.has(a.id) ? { ...a, element } : a
     );
     const updated = { ...structure, atoms: updatedAtoms };
     setStructure(updated);
-    setSelectedAtom({ ...selectedAtom, element });
+    if (selectedAtom) setSelectedAtom({ ...selectedAtom, element });
   };
 
   const handleDeleteSelected = () => {
-    if (!structure || !selectedAtom) return;
+    if (!structure) return;
+    const ids = new Set((selectedAtoms.length ? selectedAtoms : selectedAtom ? [selectedAtom] : []).map(a => a.originalId ?? a.id));
+    if (!ids.size) return;
     const updated = {
       ...structure,
-      atoms: structure.atoms.filter(a => a.id !== (selectedAtom.originalId ?? selectedAtom.id))
+      atoms: structure.atoms.filter(a => !ids.has(a.id))
     };
     setStructure(updated);
     setSelectedAtom(null);
@@ -442,12 +487,21 @@ export function App() {
       {recovery && <div role="status" className="flex shrink-0 flex-wrap items-center justify-center gap-3 bg-blue-50 px-3 py-2 text-xs text-blue-950">
         <span>检测到本机上次项目：{recovery.structure.title}</span>
         <button onClick={() => { applyProject(recovery); setRecovery(null); }}>恢复上次项目</button>
-        <button onClick={async () => { try { await writeRecovery(null);setRecovery(null);setStorageStatus('等待导入结构'); } catch { setErrorMessage('清除恢复记录失败，请稍后重试。'); } }}>清除本机恢复记录</button>
+        <button onClick={async () => { try { await writeRecovery(null, recoveryId);setRecovery(null);setRecoveryEntries(entries => entries.filter(e => e.id !== recoveryId));setStorageStatus('等待导入结构'); } catch { setErrorMessage('清除恢复记录失败，请稍后重试。'); } }}>清除本机恢复记录</button>
       </div>}
+      {recoveryEntries.some(entry => (!recovery || entry.id !== recoveryId) && entry.id !== workspace.id) && <details className="shrink-0 bg-slate-50 px-3 py-1 text-xs">
+        <summary className="cursor-pointer">其他本机恢复记录</summary>
+        <ul className="max-h-32 space-y-2 overflow-auto py-2">{recoveryEntries.filter(entry => (!recovery || entry.id !== recoveryId) && entry.id !== workspace.id).map(entry => <li key={entry.id} className="flex flex-wrap items-center gap-3">
+          <span>{entry.title} · {new Date(entry.updatedAt).toLocaleString()}</span>
+          <button onClick={async () => { try { const text = await readRecovery(entry.id); if (!text) throw new Error('恢复记录已不存在。'); applyProject(parseProject(text)); setRecovery(null); } catch (error) { setErrorMessage(error instanceof Error ? error.message : String(error)); } }}>恢复副本</button>
+          <button onClick={async () => { try { await writeRecovery(null, entry.id); setRecoveryEntries(entries => entries.filter(e => e.id !== entry.id)); setStorageRetry(n => n+1); } catch { setErrorMessage('清除恢复记录失败。'); } }}>清除旧记录</button>
+        </li>)}</ul>
+      </details>}
       {migrationNotice&&<div role="status" aria-label="材质迁移提示" className="flex shrink-0 items-center gap-3 bg-amber-50 px-3 py-2 text-xs text-amber-950"><span>{migrationNotice}</span><button type="button" onClick={()=>setMigrationNotice(undefined)}>关闭提示</button></div>}
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
         <button onClick={saveProject} disabled={!structure || isPropertiesOpen || isImporting} className="rounded border border-slate-300 px-2 py-1">保存项目</button>
         <span role="status" aria-live="polite">{isImporting ? `正在分块解析文件… ${importProgress}%` : recovery ? '等待选择恢复项目' : storageStatus}</span>
+        {history.current.wasTrimmed && <span className="text-amber-800">较早历史已按内存预算清理；可下载项目保留版本。</span>}
         {isImporting&&<button onClick={()=>{importGeneration.current++;cancelImport();setIsImporting(false);setImportProgress(0);}} className="rounded border border-slate-300 px-2 py-1">取消导入</button>}
         <span className="ml-auto text-slate-500">{structure?.sourceCif ? geometrySignature(structure) === structure.sourceCif.originalGeometry ? '保留原始 CIF 存档' : '结构已编辑 · CIF 导出为 P1 · 原始存档独立保留' : '结构与显示设置保存在本机'}</span>
       </div>
@@ -629,6 +683,7 @@ export function App() {
 
       {/* Properties Modal */}
       <VestaPropertiesModal
+        onCancelImport={() => { importGeneration.current++; cancelImport(); setIsImporting(false); setImportProgress(0); }}
         isOpen={isPropertiesOpen}
         onClose={() => setIsPropertiesOpen(false)}
         structure={structure}

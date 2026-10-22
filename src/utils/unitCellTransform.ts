@@ -31,6 +31,17 @@ export function multiplyMatrixVec(m: Matrix3x3, v: [number, number, number]): [n
   return m.map(row => row[0] * v[0] + row[1] * v[1] + row[2] * v[2]) as [number, number, number];
 }
 
+/** Preserve the allowed physical displacement subspace under A' = A P.
+ * A new direct axis is free only when its column has no frozen old-axis component.
+ * If those axes cannot span the old free subspace, three T/F flags cannot express it.
+ */
+export function transformSelectiveDynamics(flags: Atom['selectiveDynamics'], matrix: Matrix3x3): Atom['selectiveDynamics'] {
+  if (!flags) return undefined;
+  const result = [0,1,2].map(column => flags.every((free, row) => free || Math.abs(matrix[row][column]) <= 1e-12 * Math.max(1, ...matrix.map(r => Math.abs(r[column]))))) as [boolean,boolean,boolean];
+  if (result.filter(Boolean).length !== flags.filter(Boolean).length) throw new Error('此晶胞变换后的弛豫约束无法用三个 T/F 标记保持原物理方向，请先重新定义约束。');
+  return result;
+}
+
 /** VESTA convention: A' = A P; x' = P^-1 (x + n - p). */
 export function transformUnitCell(structure: CrystalStructure, params: TransformParams): CrystalStructure {
   if(structure.volumeData)throw new Error('请先在体数据属性中移除体数据，再进行晶胞变换。');
@@ -46,6 +57,7 @@ export function transformUnitCell(structure: CrystalStructure, params: Transform
   assertFiniteVector({ x: p[0], y: p[1], z: p[2] }, '平移向量');
   const invP = inverse3x3(P);
   if (!invP) throw new Error('变换矩阵奇异或数值不稳定，无法作为有效晶格基底。');
+  const constraints = new Map(structure.atoms.map(atom => [atom.id, transformSelectiveDynamics(atom.selectiveDynamics, P)]));
   const matrix = [0, 1, 2].map(column => fractionalToCartesian({ x: P[0][column], y: P[1][column], z: P[2][column] }, structure.lattice!.matrix)) as [Vec3, Vec3, Vec3];
   const lattice = calculateLatticeFromMatrix(matrix);
   const determinant = Math.abs(determinant3x3(P));
@@ -58,7 +70,7 @@ export function transformUnitCell(structure: CrystalStructure, params: Transform
     // Validate new lattice translations against the original motif before any
     // atom is discarded by a fractional/primitive-cell transformation.
     const groups = new Map<string, Atom[]>();
-    const signature = (atom: Atom) => JSON.stringify([atom.element, atom.occupancy ?? 1, atom.charge ?? 0, atom.selectiveDynamics]);
+    const signature = (atom: Atom) => JSON.stringify([atom.element, atom.occupancy ?? 1, atom.charge ?? 0, atom.selectiveDynamics, atom.displacement, atom.scalarData, atom.colorOverride, atom.radiusOverride]);
     structure.atoms.forEach(atom => groups.set(signature(atom), [...(groups.get(signature(atom)) ?? []), atom]));
     let checks = 0;
     for (let column = 0; column < 3; column++) {
@@ -112,7 +124,7 @@ export function transformUnitCell(structure: CrystalStructure, params: Transform
           assertAtomCount(atoms.length + 1);
           // Do not merge nearby or coincident source atoms: they may represent
           // distinct labels, disorder, occupancies, or independently edited sites.
-          atoms.push({ ...atom, id: atoms.length + 1, fractional, cartesian: fractionalToCartesian(fractional, matrix), selected: false });
+          atoms.push({ ...atom, id: atoms.length + 1, fractional, cartesian: fractionalToCartesian(fractional, matrix), selected: false, selectiveDynamics: constraints.get(atom.id) });
         }
       }
     }

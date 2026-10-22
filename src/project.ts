@@ -6,6 +6,7 @@ import {retiredMaterialFallback,materialMigrationNotice} from './materialCatalog
 import { displacementAxes } from './utils/displacement';
 import { calculateLatticeFromMatrix, fractionalToCartesian } from './utils/math';
 import { assertVolumeSettings } from './volume/data';
+import { assertProjectShape, assertJsonDepth } from './projectSchema';
 
 export interface ProjectState {
   migrationNotice?: string;
@@ -21,6 +22,7 @@ export const MAX_PROJECT_BYTES = 24 * 1024 * 1024;
 const object = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value);
 /** Reject unexpected shapes instead of allowing project JSON to enter renderer state. */
 export function validateProjectState(value: unknown): asserts value is ProjectState {
+  assertProjectShape(value);
   if (!object(value) || !object(value.structure) || typeof value.structure.title !== 'string' || value.structure.title.length > 10000 || !Array.isArray(value.structure.atoms)) throw new Error('项目缺少有效结构。');
   assertStructureValid(value.structure as CrystalStructure);
   const structure = value.structure;
@@ -38,7 +40,7 @@ export function validateProjectState(value: unknown): asserts value is ProjectSt
     if (atom.colorOverride !== undefined && !/^#[a-f\d]{6}$/i.test(atom.colorOverride)) throw new Error('项目原子颜色无效。');
     if (atom.radiusOverride !== undefined && (!Number.isFinite(atom.radiusOverride) || atom.radiusOverride <= 0 || atom.radiusOverride > 5)) throw new Error('项目原子半径无效。');
   }
-  if (structure.sourceCif && (!object(structure.sourceCif) || typeof structure.sourceCif.text !== 'string' || new TextEncoder().encode(structure.sourceCif.text).length > MAX_FILE_BYTES || typeof structure.sourceCif.originalGeometry !== 'string')) throw new Error('项目原始 CIF 记录无效。');
+  if (structure.sourceCif !== undefined && (!object(structure.sourceCif) || typeof structure.sourceCif.text !== 'string' || new TextEncoder().encode(structure.sourceCif.text).length > MAX_FILE_BYTES || typeof structure.sourceCif.originalGeometry !== 'string' || structure.sourceCif.originalGeometry.length > MAX_FILE_BYTES)) throw new Error('项目原始 CIF 记录无效。');
   if (!MATERIALS.includes(value.materialType) || !['ball-and-stick', 'space-filling', 'stick', 'wireframe'].includes(value.renderMode) || typeof value.showLattice !== 'boolean' || typeof value.showAxes !== 'boolean') throw new Error('项目视图配置无效。');
   const s = value.visualSettings;
   if (!object(s)) throw new Error('项目缺少显示设置。');
@@ -86,7 +88,9 @@ export function encodeProject(state: ProjectState): string {
 }
 export function parseProject(text: string): ProjectState {
   if (new TextEncoder().encode(text).length > MAX_PROJECT_BYTES) throw new Error('项目超过 24 MiB。');
+  assertJsonDepth(text);
   const value = JSON.parse(text, (key, value) => { if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error('项目含非法字段。'); return value; });
+  if (!object(value) || Object.keys(value).some(key => !['kind','version','savedAt','state'].includes(key)) || (value.savedAt !== undefined && (typeof value.savedAt !== 'string' || value.savedAt.length > 64))) throw new Error('项目文件结构无效。');
   if (value?.kind !== 'CrystalCraftProject' || ![1,PROJECT_VERSION].includes(value.version)) throw new Error('不支持的项目格式或版本。');
   if(object(value.state)&&typeof value.state.materialType==='string'){
     const fallback=retiredMaterialFallback(value.state.materialType);
@@ -96,16 +100,4 @@ export function parseProject(text: string): ProjectState {
   validateProjectState(value.state);
   return value.state;
 }
-/** Bounded history; serialized snapshots are independent of subsequent object edits. */
-export class ProjectHistory {
-  past: string[] = []; future: string[] = []; current: string | null = null;
-  observe(state: ProjectState) {
-    const next = JSON.stringify(state);
-    if (next === this.current) return;
-    if (this.current) this.past.push(this.current);
-    this.current = next; this.future = [];
-    while (this.past.length > 30 || this.past.reduce((n, item) => n + item.length * 2, 0) > 24 * 1024 * 1024) this.past.shift();
-  }
-  undo(): ProjectState | null { if (!this.past.length || !this.current) return null; this.future.push(this.current); this.current = this.past.pop()!; return JSON.parse(this.current); }
-  redo(): ProjectState | null { if (!this.future.length || !this.current) return null; this.past.push(this.current); this.current = this.future.pop()!; return JSON.parse(this.current); }
-}
+export { ProjectHistory } from './projectHistory';

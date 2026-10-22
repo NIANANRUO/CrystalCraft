@@ -362,7 +362,7 @@ export const VestaMenuBar: React.FC<VestaMenuBarProps> = ({
                 onClick={() => { onUpdateVisualSettings({ showHBonds: !visualSettings.showHBonds }); setOpenMenu(null); }}
                 className="w-full text-left px-3 py-1.5 hover:bg-[#f3f4f6] flex items-center justify-between"
               >
-                <span>Hydrogen Bonds (H-bonds)</span>
+                <span title="H–受体距离 1.5–3.1 Å；未校验供体与角度。金属虚线为半径阈值候选。">候选氢键 / 弱相互作用</span>
                 <span>{visualSettings.showHBonds ? '✓' : ''}</span>
               </button>
 

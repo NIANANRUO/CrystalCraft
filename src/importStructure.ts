@@ -15,7 +15,7 @@ export function importStructure(content: string, filename: string) {
   // A malformed identified format must not be reinterpreted as a different one.
   let structure;
   if (name.endsWith('.cif')) structure = parseCIF(content, filename);
-  else if (name.endsWith('.xyz')) structure = parseXYZ(content, filename);
+  else if (/\.(?:xyz|extxyz)$/.test(name)) structure = parseXYZ(content, filename);
   else if (/\.(poscar|vasp)$/.test(name) || /^(poscar|contcar)(\.|$)/.test(name)) structure = parsePOSCAR(content, filename);
   else if (/^\s*(data_|_cell_length)/im.test(content)) structure = parseCIF(content, filename);
   else if (/^\s*\d+\s*\r?\n/.test(content)) structure = parseXYZ(content, filename);

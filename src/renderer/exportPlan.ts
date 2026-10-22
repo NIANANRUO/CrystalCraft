@@ -6,6 +6,17 @@ export interface ExportPlan {
   renderHeight: number;
 }
 
+export type ImageFormat = 'png' | 'tiff';
+export interface ImageExportOptions {
+  width: number;
+  transparent: boolean;
+  quality: 'normal' | 'high' | 'ultra';
+  aspectRatio?: 'original' | '16:9' | '4:3' | '1:1';
+  format?: ImageFormat;
+  includeAtomLegend?: boolean;
+  dpi?: number;
+}
+
 /** Browser memory hints are coarse, so these remain conservative allocation caps. */
 export function exportPixelBudget(deviceMemory?: number): number {
   const megapixels = deviceMemory === undefined || !Number.isFinite(deviceMemory) ? 32 : deviceMemory <= 2 ? 8 : deviceMemory <= 4 ? 16 : 64;

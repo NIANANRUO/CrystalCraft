@@ -1,0 +1,39 @@
+# CrystalCraft 0.8.0 加固记录
+
+日期：2026-10-22。范围：落实 [双向钢人审查](adversarial-review-2026-10-21.md) 中 A1–A9 的确认缺陷，以及可在本地实现和验证的发布防护。0.7.0 的原子配色图例、PNG/TIFF 和默认 600 DPI 已保留。
+
+## 确认缺陷逐项状态
+
+| 项目 | 修复 | 验证入口 |
+|---|---|---|
+| A1 默认周期成键漏邻居 | 默认/显式规则共用倒格矢界限搜索，取消固定分数窗口和按长轴关闭 z 周期的规则；默认模式只补基胞的一层物理近邻，递归模式继续执行预算 | tests/adversarial.test.ts：独立穷举对照普通、斜晶胞、长轴体相、小晶胞与展开坐标 |
+| A2 换基约束改变方向 | 按新基矢能否张成原自由位移子空间转换 T/F；不能表达时拒绝；原胞平移匹配增加张量、标量、颜色、半径一致性 | tests/adversarial.test.ts、tests/math.test.ts：交换轴、正负缩放、可保持与不可保持的混合基矢 |
+| A3 项目字段漏检 | 增加运行时字段白名单、原子名称/电荷/约束/选择标记/张量检查、禁止伪造镜像身份、格式枚举和 24 层 JSON 上限；旧项目材质迁移仍可用 | tests/adversarial.test.ts、tests/hardening.test.ts、浏览器恶意输入保护 |
+| A4 取消后仍提交导入 | Cancel、Escape、关闭按钮同时终止 Worker 并使导入代次失效，之后可重新导入 | tests/e2e/adversarial.spec.ts：延迟 Worker 的三种取消与再次导入 |
+| A5 大项目无法撤销 | 大网格/原始 CIF 作为不可变共享负载；可编辑状态独立保存；预算统一包括当前、undo、redo 和唯一共享文本；属性窗只复制可编辑部分 | tests/adversarial.test.ts：约 20 MiB 四通道数据、多步样式编辑、撤销/重做、预算与可变调用方独立性 |
+| A6 占据率化学式错误 | 显示按占据率加权、未约化的晶胞 Composition；排除零占据位点 | tests/adversarial.test.ts、tests/e2e/cif.spec.ts |
+| A7 重合位点镜像合并 | 镜像身份采用源位点 ID + 整数平移，保留标签和占据率 | tests/adversarial.test.ts：同坐标 C_A/C_B 在默认与规则模式下均保留 |
+| A8 Extended XYZ 静默降格 | 识别 Lattice/Properties/pbc 和额外属性列后明确拒绝，保留当前工作区；基本 XYZ 继续支持 | 单元与浏览器格式拒绝/旧模型保护 |
+| A9 多标签恢复互相覆盖 | 每个页面写独立记录；刷新读取本页上次记录；复制标签写入副本；恢复列表可手动选择和清除；支持旧数据库 | tests/e2e/adversarial.spec.ts：独立页、复制页、相同副本不删除活跃原页、旧数据库、配额耗尽与事务中止 |
+
+恢复去重只在浏览器支持 Web Locks、旧记录没有活跃页面占用且内容完全相同时执行；不支持 Web Locks 时保留副本。不同旧版本不会被自动删除，最多保留 12 个记录，满时提示手动清理。较早历史超过 30 步或 64 MiB 文本估算预算时会清理并提示；此预算不代表浏览器/GPU 总内存上限。
+
+同时修正多选删除和元素替换只作用于单个原子的行为，一次更新对应一次撤销。距离判据的氢键/弱作用在活动界面中明确标为“候选”，说明未核验供体与角度。
+
+## 发布与站点防护
+
+- 生产 HTML 加入 CSP 与 no-referrer；脚本/Worker 限本站，外部连接、对象、嵌入框架及表单提交被禁止。保留 React 需要的内联样式。浏览器测试验证正常导入与渲染仍可用，注入脚本及外部请求被拦截。
+- 工作流直接声明的 Actions 已从官方仓库核对并固定完整 40 位 SHA。该检查不等于对复合 Action 内部所有传递依赖的完整审计；官方固定建议见 [GitHub 文档](https://docs.github.com/en/actions/reference/security/secure-use)。
+- 构建清单记录完整提交、源码是否有未提交更改、HTML/脚本/Worker/CSS/许可文件哈希及 package/lockfile 来源哈希。发布前拒绝脏源码或清单不匹配。
+- HTTPS 验收要求 EXPECTED_COMMIT，核对实际线上提交与完整清单，旧页面及其自洽哈希不能冒充预期发布。
+- HTTPS 验收通过后才归档 dist 与依赖锁，保留 90 天。恢复工作流核对可信成功运行、产物身份与完整性，并审计归档运行依赖后直接恢复；避免必须运行旧开发链才能恢复的限制。任何校验/审计失败均拒绝部署。
+
+## 验证与限制
+
+最终完整执行 `npm run check` 成功：99 项单元测试、35 项浏览器测试全部通过，TypeScript 与生产构建成功，依赖审计为 0 个已知漏洞。浏览器覆盖为本机 Windows Chromium/Edge 软件图形路径，耗时约 3.1 分钟；不是跨浏览器或真实 GPU 验收。关键新增入口为 `tests/adversarial.test.ts`、`tests/release.test.ts`、`tests/e2e/adversarial.spec.ts`、`tests/e2e/security.spec.ts`。
+
+本地发布清单验收已通过：`node scripts/verify-release.mjs dist 7417e86a5cdbe72002c8c0d9f093045b90a184a7 --allow-dirty --source-root .`。必须显式使用 `--allow-dirty`，因为这些改动仍在工作区；它只核验本地产物，不等于已提交、发布或完成远程验收。正式发布工作流不允许脏源码。
+
+尚未实施外部操作：未推送代码、未触发线上部署，未演练真实 Pages 归档恢复，未修改仓库/环境权限。真实设备 GPU、Safari/Firefox、长时间压力和 8K 峰值仍待实际设备/环境验收。meta CSP 无法设置 frame-ancestors，部署端响应头也需独立核实。
+
+审查中的完整视角/测量保存、统一科研出图标注、任意表面真空层、结构体检、双结构对比、局部高精度体采样等属于后续功能扩展，本轮没有将其列为已完成修复。

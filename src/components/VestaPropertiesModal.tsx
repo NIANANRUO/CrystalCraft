@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { cloneEditableStructure } from '../projectSnapshot';
 import { 
   X, 
   Layers, 
@@ -35,6 +36,7 @@ import { IonicRadiusEditor } from './IonicRadiusEditor';
 export type PropertiesTab = 'general' | 'atoms' | 'bonds' | 'polyhedra' | 'isosurfaces' | 'sections';
 
 interface VestaPropertiesModalProps {
+  onCancelImport?: () => void;
   onFileUpload?: (file:File)=>void;
   isOpen: boolean;
   onClose: () => void;
@@ -94,6 +96,7 @@ const VESTA_SWATCHES = [
 ];
 
 const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
+  onCancelImport,
   onFileUpload,
   onClose,
   onRestoreStructure,
@@ -123,7 +126,7 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
     atomStyle: undefined, radiiType: undefined, hideNonbonding: undefined, labelOffsetZ: undefined, outlineWidth: undefined,volumeSettings:undefined,ionicRadii:undefined,
     ...JSON.parse(JSON.stringify(visualSettings))
   }));
-  const [initialStructureSnapshot] = useState<CrystalStructure | null>(() => structure ? JSON.parse(JSON.stringify(structure)) : null);
+  const [initialStructureSnapshot] = useState<CrystalStructure | null>(() => structure ? cloneEditableStructure(structure) : null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [bondDraft, setBondDraft] = useState<BondSettings>(() => visualSettings.bondSettings
     ? structuredClone(visualSettings.bondSettings)
@@ -398,6 +401,7 @@ const VestaPropertiesModalContent: React.FC<VestaPropertiesModalProps> = ({
   };
 
   const handleCancel = () => {
+    onCancelImport?.();
     // Revert visualSettings to initial state before modal was opened
     onUpdateVisualSettings(initialSettingsSnapshot);
     onRestoreStructure?.(initialStructureSnapshot);

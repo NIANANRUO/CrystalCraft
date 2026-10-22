@@ -22,7 +22,9 @@ import { NEW_MATERIALS,materialBackground } from '../materialCatalog';
 import {drawMaterialCaption} from './materialCaption';
 import { disposeMaterial, disposeObjectTree } from './resources';
 import { SpatialIndex } from './spatialIndex';
-import { exportPixelBudget, planImageExport } from './exportPlan';
+import { exportPixelBudget, planImageExport, type ImageExportOptions } from './exportPlan';
+import { collectAtomLegend, planAtomLegend, drawAtomLegend, type AtomLegendEntry } from './atomLegend';
+import { DEFAULT_IMAGE_DPI, assertImageDpi, setPngDpi } from './imageResolution';
 import { assertAtomCount } from '../utils/validation';
 import { assertRenderBudget, MAX_DISPLAYED_ATOMS, MAX_BOND_SEGMENTS, MAX_WEAK_INTERACTIONS, MAX_POLYHEDRON_LIGANDS, MAX_POLYHEDRA_POINTS } from './limits';
 import { dist } from '../utils/math';
@@ -628,6 +630,24 @@ export class CrystalScene {
     return getElement(atom.element).color;
   }
 
+  private atomMaterial(atom: Atom, selected: boolean) {
+    const color = this.getEffectiveAtomColor(atom);
+    const wireframe = this.renderMode === 'wireframe';
+    if (!NEW_MATERIALS.includes(this.materialType) && (this.visualSettings.atomSpecular !== undefined || this.visualSettings.atomShininess !== undefined)) {
+      const specular = this.visualSettings.atomSpecular ?? { r: 204, g: 204, b: 204 };
+      const shine = this.visualSettings.atomShininess ?? 20;
+      const key = `atom-phong:${color}:${selected}:${JSON.stringify(specular)}:${shine}:${this.renderMode}`;
+      if (!this.materialCache.has(key)) this.materialCache.set(key, new THREE.MeshPhongMaterial({
+        color, specular: new THREE.Color().setRGB(specular.r / 255, specular.g / 255, specular.b / 255, THREE.SRGBColorSpace),
+        shininess: shine * 2, emissive: selected ? '#334155' : '#000000', wireframe
+      }));
+      return this.materialCache.get(key)!;
+    }
+    return createMaterial(this.materialType, color, selected, this.materialCache, wireframe, {
+      textureStrength: this.visualSettings.textureStrength, textureScale: this.visualSettings.textureScale, role: 'atom'
+    });
+  }
+
   public getEffectiveAtomRadius(atom: Atom): number {
     const scale = this.visualSettings.atomScale;
     if (this.renderMode === 'space-filling') {
@@ -737,83 +757,7 @@ export class CrystalScene {
   }
 
   private computeDisplayedAtoms(): Atom[] {
-    if (!this.currentStructure) return [];
-    if (this.visualSettings.bondSettings?.enabled) return expandBondRuleAtoms(this.currentStructure, this.visualSettings);
-    const baseAtoms = this.currentStructure.atoms;
-    if (!this.visualSettings.showBoundaryAtoms || !this.currentStructure.lattice || !this.currentStructure.isPeriodic) {
-      return baseAtoms;
-    }
-
-    const [va, vb, vc] = this.currentStructure.lattice.matrix;
-    const tolerance = this.visualSettings.bondTolerance;
-    if (!Number.isFinite(tolerance) || tolerance <= 0) throw new Error('成键容差必须为有限正数。');
-    const displayed: Atom[] = [...baseAtoms.map(a => ({ ...a, isBoundary: false }))];
-    const keySet = new Set(baseAtoms.map(a => `${a.fractional.x.toFixed(3)},${a.fractional.y.toFixed(3)},${a.fractional.z.toFixed(3)}`));
-
-    const isSlab = this.currentStructure.lattice.c > 1.3 * Math.max(this.currentStructure.lattice.a, this.currentStructure.lattice.b);
-    const zRange = isSlab ? [0] : [-1, 0, 1];
-
-    const maxRadius = Math.max(...baseAtoms.map(atom => getElement(atom.element).radius), 0.1);
-    const searchRadius = Math.max(0.1, 2 * maxRadius * tolerance);
-    const index = new SpatialIndex(baseAtoms, searchRadius);
-    let boundaryId = Math.max(0, ...baseAtoms.map(atom => atom.id)) + 1;
-    for (const a2 of baseAtoms) {
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (const dz of zRange) {
-            if (dx === 0 && dy === 0 && dz === 0) continue;
-              const imgFrac = {
-                x: a2.fractional.x + dx,
-                y: a2.fractional.y + dy,
-                z: a2.fractional.z + dz
-              };
-
-              // Boundary range: only include atoms near unit cell faces
-              if (
-                imgFrac.x < -0.08 || imgFrac.x > 1.08 ||
-                imgFrac.y < -0.08 || imgFrac.y > 1.08 ||
-                imgFrac.z < -0.08 || imgFrac.z > 1.08
-              ) {
-                continue;
-              }
-
-              const imgCart = {
-                x: imgFrac.x * va.x + imgFrac.y * vb.x + imgFrac.z * vc.x,
-                y: imgFrac.x * va.y + imgFrac.y * vb.y + imgFrac.z * vc.y,
-                z: imgFrac.x * va.z + imgFrac.y * vb.z + imgFrac.z * vc.z
-              };
-
-              const r2 = getElement(a2.element).radius;
-              const hasBond = index.query(imgCart, searchRadius).some(a1 => {
-                const d = dist(a1.cartesian, imgCart);
-                return d > 0.4 && d <= (getElement(a1.element).radius + r2) * tolerance;
-              });
-
-              if (hasBond) {
-                const k = `${imgFrac.x.toFixed(3)},${imgFrac.y.toFixed(3)},${imgFrac.z.toFixed(3)}`;
-                if (!keySet.has(k)) {
-                  assertRenderBudget(displayed.length + 1, MAX_DISPLAYED_ATOMS, `周期边界补全后超过 ${MAX_DISPLAYED_ATOMS} 个显示原子。请关闭边界补全或减小结构后重试。`);
-                  if (!Number.isSafeInteger(boundaryId)) throw new Error('原子 ID 过大，无法生成独立的周期边界编号。请重新导入结构。');
-                  keySet.add(k);
-                  displayed.push({
-                    id: boundaryId++,
-                    element: a2.element,
-                    fractional: imgFrac,
-                    cartesian: imgCart,
-                    isBoundary: true,
-                    originalId: a2.id,
-                    imageOffset: [dx, dy, dz],
-                    colorOverride: a2.colorOverride,
-                    radiusOverride: a2.radiusOverride, displacement: a2.displacement
-                  });
-                }
-              }
-          }
-        }
-      }
-    }
-
-    return displayed;
+    return this.currentStructure ? expandBondRuleAtoms(this.currentStructure, this.visualSettings) : [];
   }
 
   private renderAtoms() {
@@ -861,20 +805,7 @@ export class CrystalScene {
 
       const isSelected = this.selectedAtomIds.has(effectiveId);
       const r = this.getEffectiveAtomRadius(atom);
-      const color=this.getEffectiveAtomColor(atom);
-      let mat=createMaterial(this.materialType,color,isSelected,this.materialCache,this.renderMode==='wireframe',{
-        textureStrength:this.visualSettings.textureStrength,textureScale:this.visualSettings.textureScale,role:'atom'
-      });
-      if (!NEW_MATERIALS.includes(this.materialType)&&(this.visualSettings.atomSpecular !== undefined || this.visualSettings.atomShininess !== undefined)) {
-        const specular = this.visualSettings.atomSpecular ?? { r: 204, g: 204, b: 204 };
-        const shine = this.visualSettings.atomShininess ?? 20;
-        const key = `atom-phong:${color}:${isSelected}:${JSON.stringify(specular)}:${shine}:${this.renderMode}`;
-        if (!this.materialCache.has(key)) this.materialCache.set(key, new THREE.MeshPhongMaterial({
-          color, specular: new THREE.Color().setRGB(specular.r / 255, specular.g / 255, specular.b / 255, THREE.SRGBColorSpace),
-          shininess: shine * 2, emissive: isSelected ? '#334155' : '#000000', wireframe: this.renderMode === 'wireframe'
-        }));
-        mat = this.materialCache.get(key)!;
-      }
+      const mat = this.atomMaterial(atom, isSelected);
 
       const mesh = new THREE.Mesh(this.unitSphereGeo, mat);
       mesh.position.copy(p);
@@ -2111,12 +2042,9 @@ export class CrystalScene {
    * High-Resolution & Transparent Offline Renderer (渲染图像功能)
    * 支持 1080p, 2K, 4K, 5K, 8K, 透明/不透明背景, Normal/High/Ultra 质量
    */
-  public async renderHighResImage(options: {
-    width: number;
-    transparent: boolean;
-    quality: 'normal' | 'high' | 'ultra';
-    aspectRatio?: 'original' | '16:9' | '4:3' | '1:1';
-  }): Promise<string> {
+  public async renderHighResImage(options: ImageExportOptions): Promise<string> {
+    if (options.format !== undefined && !['png', 'tiff'].includes(options.format)) throw new Error('不支持的图像格式。');
+    const dpi = options.dpi ?? DEFAULT_IMAGE_DPI; assertImageDpi(dpi);
     if(this.volumeLayer?.pending)await this.volumeLayer.pending;
     if(this.volumeLayer?.error)throw new Error(this.volumeLayer.error);
     if (this.disposed || this.contextLost) throw new Error('当前图形上下文不可用，请恢复画面后重试。');
@@ -2135,6 +2063,8 @@ export class CrystalScene {
     const maxDimension = Math.min(this.renderer.capabilities.maxTextureSize, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), viewport[0], viewport[1]);
     const memoryHint = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
     const plan = planImageExport(options.width, aspect, options.quality, maxDimension, exportPixelBudget(memoryHint));
+    const legendEntries = options.includeAtomLegend ? collectAtomLegend(this.currentStructure, atom => this.getEffectiveAtomColor(atom)) : [];
+    const legendLayout = planAtomLegend(plan.width, plan.height, legendEntries.length);
 
     // Save previous renderer state
     const prevPixelRatio = this.renderer.getPixelRatio();
@@ -2176,7 +2106,7 @@ export class CrystalScene {
       this.renderer.render(this.scene, camera);
       if (gl.isContextLost()) throw new Error('高分辨率渲染超出当前设备资源，请降低分辨率后重试。');
       let captureCanvas = this.renderer.domElement;
-      if (plan.sampleScale > 1) {
+      if (plan.sampleScale > 1 || legendEntries.length || NEW_MATERIALS.includes(this.materialType) || options.format === 'tiff') {
         outputCanvas = document.createElement('canvas');
         outputCanvas.width = plan.width;
         outputCanvas.height = plan.height;
@@ -2184,15 +2114,29 @@ export class CrystalScene {
         if (!ctx) throw new Error('浏览器无法创建图像输出画布，请降低分辨率。');
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(captureCanvas, 0, 0, plan.width, plan.height);
+        if (!options.transparent) { ctx.fillStyle = prevBg instanceof THREE.Color ? `#${prevBg.getHexString()}` : '#ffffff'; ctx.fillRect(0, 0, plan.width, plan.height); }
+        const availableHeight = plan.height - legendLayout.footerHeight;
+        const scale = Math.min(plan.width / plan.renderWidth, availableHeight / plan.renderHeight);
+        const w = plan.renderWidth * scale, h = plan.renderHeight * scale;
+        ctx.drawImage(captureCanvas, (plan.width - w) / 2, (availableHeight - h) / 2, w, h);
+        if (legendEntries.length && !options.transparent) { ctx.fillStyle = '#ffffff'; ctx.fillRect(0, availableHeight, plan.width, legendLayout.footerHeight); }
         captureCanvas = outputCanvas;
       }
       if(NEW_MATERIALS.includes(this.materialType)){
         if(!outputCanvas){outputCanvas=document.createElement('canvas');outputCanvas.width=plan.width;outputCanvas.height=plan.height;const ctx=outputCanvas.getContext('2d');if(!ctx)throw new Error('无法创建材质标注画布。');ctx.drawImage(captureCanvas,0,0,plan.width,plan.height);}
         const ctx=outputCanvas.getContext('2d');if(!ctx)throw new Error('无法创建材质标注画布。');
-        drawMaterialCaption(ctx,plan.width,plan.height,this.materialType,this.currentStructure,this.visualSettings);captureCanvas=outputCanvas;
+        drawMaterialCaption(ctx,plan.width,plan.height-legendLayout.footerHeight,this.materialType,this.currentStructure,this.visualSettings);captureCanvas=outputCanvas;
       }
-      const blob = await new Promise<Blob>((resolve, reject) => {
+      if (legendEntries.length && outputCanvas) {
+        const ctx = outputCanvas.getContext('2d')!;
+        this.drawExportAtomLegend(ctx, plan.width, plan.height, legendEntries, legendLayout, options.transparent);
+      }
+      const blob = options.format === 'tiff' ? await (async () => {
+        const { encodeTiff } = await import('./tiff');
+        const ctx = captureCanvas.getContext('2d');
+        if (!ctx) throw new Error('无法读取 TIFF 图像像素。');
+        return new Blob([encodeTiff(plan.width, plan.height, ctx.getImageData(0, 0, plan.width, plan.height).data, options.transparent, dpi)], { type: 'image/tiff' });
+      })() : await new Promise<Blob>((resolve, reject) => {
         const timeout = window.setTimeout(() => reject(new Error('图像编码超时，请降低分辨率后重试。')), 30000);
         try {
           captureCanvas.toBlob(value => {
@@ -2206,7 +2150,8 @@ export class CrystalScene {
         }
       });
       if (this.disposed || this.contextLost) throw new Error('导出期间图形上下文已中断，请恢复后重试。');
-      return URL.createObjectURL(blob);
+      const file = options.format === 'tiff' ? blob : new Blob([setPngDpi(await blob.arrayBuffer(), dpi)], { type: 'image/png' });
+      return URL.createObjectURL(file);
     } finally {
       if (outputCanvas) { outputCanvas.width = 0; outputCanvas.height = 0; }
       this.exporting = false;
@@ -2228,6 +2173,41 @@ export class CrystalScene {
         this.startLoop();
       }
     }
+  }
+
+  /** Render each reference ball with the same materials, lighting and color pipeline.
+   * Selection glow is transient UI state and is intentionally absent from the palette.
+   */
+  private drawExportAtomLegend(ctx: CanvasRenderingContext2D, width: number, height: number, entries: AtomLegendEntry[], layout: ReturnType<typeof planAtomLegend>, transparent: boolean) {
+    const scene = new THREE.Scene(); scene.environment = this.scene.environment;
+    scene.background = transparent ? null : new THREE.Color('#ffffff');
+    const center = this.controls.target;
+    for (const source of this.scene.children) if (source instanceof THREE.Light) {
+      const light = source.clone(); light.position.sub(center); light.castShadow = false;
+      if (light instanceof THREE.DirectionalLight && source instanceof THREE.DirectionalLight) {
+        light.target = source.target.clone(); light.target.position.sub(center); scene.add(light.target);
+      }
+      scene.add(light);
+    }
+    const camera = new THREE.OrthographicCamera(-1.18, 1.18, 1.18, -1.18, .1, 20);
+    camera.position.copy(this.activeCamera.position).sub(center).normalize().multiplyScalar(5);
+    camera.up.copy(this.activeCamera.up); camera.lookAt(0, 0, 0);
+    const geometry = new THREE.SphereGeometry(1, 40, 28);
+    const mesh = new THREE.Mesh(geometry, this.atomMaterial(entries[0].atom, false)); scene.add(mesh);
+    const outline = new THREE.Mesh(geometry, getOutlineMaterial(this.materialType, this.materialCache));
+    outline.scale.setScalar(1 + .0325 * (this.visualSettings.outlineWidth ?? 2) / 2);
+    outline.visible = this.visualSettings.showOutline && this.renderMode !== 'wireframe' && !['xray','glow','cyber','lidar'].includes(this.materialType);
+    scene.add(outline);
+    try {
+      const size = Math.ceil(layout.sphereSize * 2);
+      this.renderer.setSize(size, size, false);
+      drawAtomLegend(ctx, width, height, entries, layout, entry => {
+        mesh.material = this.atomMaterial(entry.atom, false);
+        this.renderer.render(scene, camera);
+        if (this.renderer.getContext().isContextLost()) throw new Error('原子图例渲染失败，请降低分辨率。');
+        return this.renderer.domElement;
+      });
+    } finally { geometry.dispose(); scene.clear(); }
   }
 
   public dispose() {

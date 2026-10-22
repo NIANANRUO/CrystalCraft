@@ -19,11 +19,13 @@ export function parseXYZ(content: string, filename = 'molecule.xyz'): CrystalStr
   if (lines.slice(numAtoms + 2).some(line => line.trim())) throw new Error('XYZ 含额外原子或多个轨迹帧，请拆分为单帧结构后导入。');
 
   const comment = lines[1].trim();
+  if (/(?:^|\s)(?:Lattice|Properties|pbc)\s*=/i.test(comment)) throw new Error('检测到 Extended XYZ 的晶格、周期性或属性字段。当前仅支持基本 XYZ；请转换为 CIF/POSCAR，避免丢失周期或原子属性信息。');
   const atoms: Atom[] = [];
 
   for (let i = 2; i < 2 + numAtoms; i++) {
     const parts = lines[i].trim().split(/\s+/);
     if (parts.length < 4) throw new Error(`XYZ 第 ${i + 1} 行缺少原子坐标。`);
+    if (parts.length > 4) throw new Error(`XYZ 第 ${i + 1} 行包含额外属性列。当前仅支持元素和三个坐标，请先转换格式以保留其他属性。`);
 
     const element = parts[0];
     assertElementToken(element);

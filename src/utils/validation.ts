@@ -1,5 +1,6 @@
 import { CrystalStructure, Vec3 } from '../types/crystal';
 import { assertVolumeData } from '../volume/data';
+import { displacementAxes } from './displacement';
 
 // Conservative budgets for a browser renderer with per-atom meshes and pair searches.
 // Keep these shared by import, editing, replication, and rendering entry points.
@@ -60,12 +61,13 @@ export function assertLatticeMatrix(matrix: [Vec3, Vec3, Vec3]): void {
 export function assertElementToken(element: string): void {
   // Retain VASP species labels and unknown-species placeholders while preventing
   // whitespace/newline injection into exported tabular formats.
-  if (!/^[A-Za-z][A-Za-z0-9_+\-]{0,31}$/.test(element)) {
+  if (typeof element !== 'string' || !/^[A-Za-z][A-Za-z0-9_+\-]{0,31}$/.test(element)) {
     throw new Error(`无效的元素或物种名称：${String(element).slice(0, 40)}`);
   }
 }
 
 export function assertStructureValid(structure: CrystalStructure, allowEmpty = true): void {
+  if (!structure || typeof structure !== 'object' || !Array.isArray(structure.atoms)) throw new Error('结构缺少有效的原子数组。');
   assertAtomCount(structure.atoms.length, allowEmpty);
   if (structure.isPeriodic && !structure.lattice) throw new Error('周期结构缺少晶格。');
   if (structure.lattice) assertLatticeMatrix(structure.lattice.matrix);
@@ -73,11 +75,22 @@ export function assertStructureValid(structure: CrystalStructure, allowEmpty = t
   if(structure.scalarSource!==undefined&&(typeof structure.scalarSource!=='string'||structure.scalarSource.length>1000))throw new Error('标量来源记录无效。');
   const ids = new Set<number>();
   for (const atom of structure.atoms) {
+    if (!atom || typeof atom !== 'object' || Array.isArray(atom)) throw new Error('原子记录必须为对象。');
     if (!Number.isSafeInteger(atom.id) || atom.id < 1 || ids.has(atom.id)) throw new Error('原子 ID 必须为互不重复的正整数。');
     ids.add(atom.id);
     assertElementToken(atom.element);
     assertFiniteVector(atom.cartesian, `原子 ${atom.id} 的笛卡尔坐标`);
     assertFiniteVector(atom.fractional, `原子 ${atom.id} 的分数坐标`);
+    if (atom.name !== undefined && (typeof atom.name !== 'string' || atom.name.length > 128 || /[\0\r\n]/.test(atom.name))) throw new Error('原子位点名称必须为不超过 128 字符的单行文本。');
+    if (atom.charge !== undefined && (!Number.isFinite(atom.charge) || Math.abs(atom.charge) > 1000)) throw new Error('原子电荷无效。');
+    if (atom.selected !== undefined && typeof atom.selected !== 'boolean') throw new Error('原子选择标记无效。');
+    if (atom.selectiveDynamics !== undefined && (!Array.isArray(atom.selectiveDynamics) || atom.selectiveDynamics.length !== 3 || !atom.selectiveDynamics.every(flag => typeof flag === 'boolean'))) throw new Error('原子弛豫约束必须为三个布尔 T/F 标记。');
+    if (atom.displacement !== undefined) {
+      if (!Array.isArray(atom.displacement) || atom.displacement.length !== 6 || !atom.displacement.every(Number.isFinite)) throw new Error('原子位移张量必须为六个有限数值。');
+      displacementAxes(atom.displacement);
+    }
+    if (atom.colorOverride !== undefined && (typeof atom.colorOverride !== 'string' || !/^#[a-f\d]{6}$/i.test(atom.colorOverride))) throw new Error('原子颜色无效。');
+    if (atom.radiusOverride !== undefined && (!Number.isFinite(atom.radiusOverride) || atom.radiusOverride <= 0 || atom.radiusOverride > 5)) throw new Error('原子半径无效。');
     if(atom.scalarData!==undefined){
       const data=atom.scalarData;
       if(!data||typeof data!=='object'||Array.isArray(data)||Object.entries(data).some(([key,value])=>!['esp','orbital','spin','bFactor'].includes(key)||!Number.isFinite(value)||Math.abs(value)>1e9||(key==='bFactor'&&value<0)))throw new Error('原子标量数据无效。');

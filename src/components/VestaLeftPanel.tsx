@@ -600,7 +600,7 @@ export const VestaLeftPanel: React.FC<VestaLeftPanelProps> = ({
                               onChange={(e) => onUpdateVisualSettings({ showHBonds: e.target.checked })}
                               className="accent-slate-700 rounded w-3.5 h-3.5 cursor-pointer"
                             />
-                            <span className="font-medium">氢键/弱作用虚线 (H-bonds)</span>
+                            <span className="font-medium" title="几何候选：H–受体距离 1.5–3.1 Å，未校验供体与角度；金属弱作用按半径阈值推断。">候选氢键/弱作用虚线</span>
                           </div>
                           {visualSettings.showHBonds && hbondsCount !== undefined ? (
                             <span className="text-[10px] px-1.5 py-0.5 bg-sky-50 text-sky-700 border border-sky-200/80 rounded font-mono font-semibold">
@@ -1309,7 +1309,7 @@ export const VestaLeftPanel: React.FC<VestaLeftPanelProps> = ({
 
                 {/* Hydrogen Bonds */}
                 <div className="flex items-center justify-between py-1">
-                  <span className="text-[11px] text-slate-700">氢键显示 (H-Bonds)</span>
+                  <span className="text-[11px] text-slate-700" title="仅为距离判据的几何候选，不代表已确认的氢键或相互作用。">候选氢键/弱作用</span>
                   <button
                     onClick={() => onUpdateVisualSettings({ showHBonds: !visualSettings.showHBonds })}
                     className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold cursor-pointer transition ${

@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useModalDialog } from '../hooks/useModalDialog';
+import type { ImageExportOptions, ImageFormat } from '../renderer/exportPlan';
+import { DEFAULT_IMAGE_DPI } from '../renderer/imageResolution';
 import { 
   X, 
   Camera, 
@@ -13,12 +15,7 @@ import {
   Info
 } from 'lucide-react';
 
-export interface RenderExportOptions {
-  width: number;
-  transparent: boolean;
-  quality: 'normal' | 'high' | 'ultra';
-  aspectRatio?: 'original' | '16:9' | '4:3' | '1:1';
-}
+export type RenderExportOptions = ImageExportOptions;
 
 interface RenderImageModalProps {
   isOpen: boolean;
@@ -49,6 +46,9 @@ export const RenderImageModal: React.FC<RenderImageModalProps> = ({
   const [isTransparent, setIsTransparent] = useState<boolean>(false);
   const [quality, setQuality] = useState<'normal' | 'high' | 'ultra'>('high');
   const [aspectRatio, setAspectRatio] = useState<'original' | '16:9' | '4:3' | '1:1'>('original');
+  const [format, setFormat] = useState<ImageFormat>('png');
+  const [includeAtomLegend, setIncludeAtomLegend] = useState(true);
+  const [dpi, setDpi] = useState(DEFAULT_IMAGE_DPI);
 
   // Collapsible sections
   const [isResDropdownOpen, setIsResDropdownOpen] = useState<boolean>(false);
@@ -77,7 +77,10 @@ export const RenderImageModal: React.FC<RenderImageModalProps> = ({
         width: resolution,
         transparent: isTransparent,
         quality,
-        aspectRatio
+        aspectRatio,
+        format,
+        includeAtomLegend,
+        dpi
       });
       onClose();
     } catch (err) {
@@ -120,6 +123,30 @@ export const RenderImageModal: React.FC<RenderImageModalProps> = ({
             <X size={17} />
           </button>
         </div>
+
+        <fieldset disabled={isExporting} className="my-3 space-y-2.5 shrink-0 disabled:opacity-60">
+          <label className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-700">
+            图片格式
+            <select aria-label="图片格式" value={format} onChange={e => setFormat(e.target.value as ImageFormat)} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-xs">
+              <option value="png">PNG · 无损 / PPT</option>
+              <option value="tiff">TIFF · 无损 / 印刷</option>
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-700">
+            印刷分辨率
+            <select aria-label="印刷分辨率 DPI" value={dpi} onChange={e => setDpi(Number(e.target.value))} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-xs">
+              <option value={300}>300 DPI</option>
+              <option value={600}>600 DPI（默认）</option>
+              <option value={1200}>1200 DPI</option>
+            </select>
+          </label>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 text-xs text-slate-700">
+            <input type="checkbox" checked={includeAtomLegend} onChange={e => setIncludeAtomLegend(e.target.checked)} className="h-4 w-4 accent-slate-800" />
+            包含原子配色图例
+          </label>
+          <p className="text-[11px] leading-relaxed text-slate-500">图例包含全部元素及不同的单原子配色，小球沿用当前材质与光照；纯色色块和 HEX 用于 PPT 精确取色。</p>
+          {format === 'tiff' && <p className="text-[11px] leading-relaxed text-slate-500">TIFF 保留 RGB 颜色和透明通道，采用无压缩存储，文件会比 PNG 大。</p>}
+        </fieldset>
 
         {/* Tab Navigation: 统一白色极简分段控件 */}
         <div className="mt-3.5 mb-4 p-1 bg-slate-100 rounded-xl flex gap-1 border border-slate-200/80">
@@ -241,7 +268,7 @@ export const RenderImageModal: React.FC<RenderImageModalProps> = ({
                   }`}
                 >
                   <span className="w-2.5 h-2.5 rounded-full bg-transparent border border-dashed border-slate-400 shrink-0" />
-                  <span>透明通道 (PNG Alpha)</span>
+                  <span>透明通道 ({format === 'tiff' ? 'TIFF' : 'PNG'} Alpha)</span>
                 </button>
               </div>
             </div>
@@ -303,8 +330,8 @@ export const RenderImageModal: React.FC<RenderImageModalProps> = ({
                     <span className="text-slate-800">{quality === 'ultra' ? '最高 4096px 阴影 + 4x 采样' : quality === 'high' ? '最高 2048px 阴影 + 2x 采样' : '标准贴图'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">300 DPI 印刷尺寸:</span>
-                    <span className="text-slate-800">{(resolution / 300 * 2.54).toFixed(1)} cm</span>
+                    <span className="text-slate-400">{dpi} DPI 印刷宽度:</span>
+                    <span className="text-slate-800">{(resolution / dpi * 2.54).toFixed(1)} cm</span>
                   </div>
                 </div>
               )}
@@ -351,8 +378,8 @@ export const RenderImageModal: React.FC<RenderImageModalProps> = ({
                 <Sparkles size={13} className="text-slate-700" />
                 <span>顶刊出版建议</span>
               </div>
-              <p>• 论文正文图推荐选择 <strong>4K (3840px) + 4:3 或 16:9</strong>，300 DPI 下满足大多数顶级期刊 (Nature / Science / JACS) 严格要求。</p>
-              <p>• 需要无缝插入 PPT 或做多图拼接时，请开启 <strong>透明通道 (PNG Alpha)</strong>。</p>
+              <p>• 默认 <strong>600 DPI</strong>，PNG 与 TIFF 均写入所选 DPI。更改 DPI 不增加像素；印刷细节由图像像素尺寸与实际排版宽度共同决定。</p>
+              <p>• 需要无缝插入 PPT 或做多图拼接时，可开启 <strong>透明通道</strong>。PNG 与 TIFF 均支持。</p>
             </div>
           </div>
         )}
@@ -381,7 +408,7 @@ export const RenderImageModal: React.FC<RenderImageModalProps> = ({
                 <span>正在渲染高清图...</span>
               </>
             ) : (
-              <span>导出 PNG 图像</span>
+              <span>导出 {format === 'tiff' ? 'TIFF' : 'PNG'} 图像</span>
             )}
           </button>
         </div>

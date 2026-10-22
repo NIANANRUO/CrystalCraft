@@ -66,7 +66,7 @@ test('Ctrl selection survives React synchronization and Cancel restores structur
   await expect(dialog).toBeVisible();
   const deletion = dialog.getByRole('button', { name: '删除 (空位)', exact: true });
   await deletion.click();
-  await expect(page.locator('tbody tr')).toHaveCount(3);
+  await expect(page.locator('tbody tr')).toHaveCount(2);
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page.locator('tbody tr')).toHaveCount(4);
 });

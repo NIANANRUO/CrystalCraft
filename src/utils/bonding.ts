@@ -83,27 +83,31 @@ export function defaultBondRules(structure: CrystalStructure | null, tolerance: 
 /** Finite BFS over periodic images. Reciprocal-vector bounds also cover skew cells
  * and bond cutoffs larger than one cell. Budgets reject unbounded networks rather
  * than silently truncating them into an apparently complete molecule. */
-export function expandBondRuleAtoms(structure: CrystalStructure, settings: VisualSettings): Atom[] {
+export function expandPeriodicAtoms(structure: CrystalStructure, settings: VisualSettings): Atom[] {
+  if (!settings.showBoundaryAtoms || !structure.isPeriodic || !structure.lattice || !structure.atoms.length) return structure.atoms;
   const base = structure.atoms.map(a => ({ ...a, isBoundary: false }));
-  if (!settings.showBoundaryAtoms || !structure.isPeriodic || !structure.lattice || !base.length) return base;
-  const rules = settings.bondSettings!.rules.filter(r => r.boundaryMode !== 1);
-  if (!rules.length) return base;
+  const automatic = !settings.bondSettings?.enabled;
+  if (!Number.isFinite(settings.bondTolerance) || settings.bondTolerance <= 0) throw new Error('成键容差必须为有限正数。');
+  const rules = automatic ? [] : settings.bondSettings!.rules.filter(r => r.boundaryMode !== 1);
+  if (!automatic && !rules.length) return base;
   const matrix = structure.lattice.matrix;
-  const radius = Math.max(...rules.map(r => r.maxLength));
+  const radius = automatic ? bondSearchRadius(base, settings) : Math.max(...rules.map(r => r.maxLength));
   const fractionalReach = invertMatrix(matrix).map(row => norm(row) * radius);
   const axes = ['x', 'y', 'z'] as const;
   const bounds = axes.map(k => [Math.min(...base.map(a => a.fractional[k])), Math.max(...base.map(a => a.fractional[k]))]);
   const index = new SpatialIndex(base, radius);
-  const key = (a: Atom) => `${a.element}:${axes.map(k => Math.round(a.fractional[k] * 1e8)).join(',')}`;
+  // Identity is the source site and integer translation, never rounded geometry.
+  const key = (a: Atom) => `${a.originalId ?? a.id}:${(a.imageOffset ?? [0,0,0]).join(',')}`;
   const seen = new Set(base.map(key));
   const result: Atom[] = [...base];
   let nextId = Math.max(...base.map(a => a.id)) + 1;
   let queries = 0, comparisons = 0, ruleChecks = 0;
-  const budgetMessage = '周期键搜索超过显示预算，可能形成无限周期网络。请使用 Boundary 1/2、缩小键长范围或关闭边界补全。';
+  const budgetMessage = `周期键搜索超过 ${MAX_DISPLAYED_ATOMS} 个显示原子或搜索预算，可能形成无限周期网络。请使用 Boundary 1/2、缩小键长范围或关闭边界补全。`;
   for (let cursor = 0; cursor < result.length; cursor++) {
     const center = result[cursor];
+    if (automatic && center.isBoundary) continue; // One shell around all base sites, not an infinite network.
     const active = rules.filter(r => r.boundaryMode === 3 || (!center.isBoundary && (r.searchMode === 'molecule' || (r.searchByLabel ? atomSiteLabel(center) : center.element) === r.atom1)));
-    if (!active.length) continue;
+    if (!automatic && !active.length) continue;
     const ranges = axes.map((k, i) => [Math.ceil(center.fractional[k] - bounds[i][1] - fractionalReach[i] - 1e-8), Math.floor(center.fractional[k] - bounds[i][0] + fractionalReach[i] + 1e-8)]);
     const tiles = ranges.reduce((n, [lo, hi]) => n * (hi - lo + 1), 1);
     assertRenderBudget(queries + tiles, 200_000, budgetMessage);
@@ -118,10 +122,10 @@ export function expandBondRuleAtoms(structure: CrystalStructure, settings: Visua
           originalId: source.id, imageOffset: [x, y, z], isBoundary: true };
         if (seen.has(key(candidate))) continue;
         const d = dist(center.cartesian, candidate.cartesian);
-        if (!active.some(r => {
+        if (!(automatic ? hasAutomaticBond(center, candidate, settings, d) : active.some(r => {
           assertRenderBudget(++ruleChecks, 4_000_000, budgetMessage);
           return ruleMatchesDistance(r, d) && (ruleMatchesDirection(r, center, candidate) || (r.boundaryMode === 3 && ruleMatchesDirection(r, candidate, center)));
-        })) continue;
+        }))) continue;
         assertRenderBudget(result.length + 1, MAX_DISPLAYED_ATOMS, budgetMessage);
         if (!Number.isSafeInteger(nextId)) throw new Error('原子 ID 过大，无法生成周期原子编号。');
         candidate.id = nextId++;
@@ -131,3 +135,5 @@ export function expandBondRuleAtoms(structure: CrystalStructure, settings: Visua
   }
   return result;
 }
+
+export const expandBondRuleAtoms = expandPeriodicAtoms;
