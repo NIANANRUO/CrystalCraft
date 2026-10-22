@@ -29,13 +29,13 @@ jobs:
           cache: npm
       - id: revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npm test
       - run: npm run build
       - run: node scripts/verify-release.mjs dist "$EXPECTED_COMMIT" --source-root .
         env:
           EXPECTED_COMMIT: ${{ steps.revision.outputs.sha }}
-      - run: npm audit --audit-level=moderate
+      - run: npm run audit:dependencies
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -83,7 +83,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npx playwright install --with-deps chromium
       - run: npm run test:deployment
         env:
