@@ -57,9 +57,8 @@ jobs:
           github-token: ${{ github.token }}
       - run: node scripts/verify-release.mjs release-bundle/dist "$EXPECTED_COMMIT" --source-root release-bundle
       - name: Audit archived runtime dependencies without installing old build tools
-        working-directory: release-bundle
-        run: npm audit --omit=dev --audit-level=moderate
-      - run: npm ci
+        run: npm run audit:dependencies -- --prefix release-bundle --omit=dev
+      - run: npm ci --no-audit
       - run: npx playwright install --with-deps chromium
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:

@@ -15,10 +15,10 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit
       - run: npm test
       - run: npm run build
-      - run: npm audit --audit-level=moderate
+      - run: npm run audit:dependencies
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node tests/run-tests.mjs",
     "test:e2e": "playwright test",
-    "check": "npm audit --audit-level=moderate && npm test && npm run build && npm run test:e2e",
+    "audit:dependencies": "node scripts/audit-dependencies.mjs",
+    "check": "npm run audit:dependencies && npm test && npm run build && npm run test:e2e",
     "test:deployment": "playwright test --config=playwright.deployment.config.ts",
     "test:performance": "node tests/performance.mjs"
   },
